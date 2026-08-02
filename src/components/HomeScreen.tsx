@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useGameStore, type GameType } from '@/store/useGameStore';
+import { useGameStore, type GameType, type Screen } from '@/store/useGameStore';
 import { getDayNumber } from '@/lib/seededRandom';
 
 const exercises = [
@@ -39,6 +39,20 @@ const exercises = [
     icon: (
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#1CB0F6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'circuit' as GameType,
+    name: 'Circuit Connect',
+    desc: 'Connect matching colors without crossing paths',
+    color: '#FF9600',
+    bgColor: '#FFF5E6',
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#FF9600" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="5" cy="5" r="2.5"/>
+        <circle cx="19" cy="19" r="2.5"/>
+        <path d="M7.5 5.5 Q12 12 16.5 18.5"/>
       </svg>
     ),
   },
@@ -140,7 +154,7 @@ export default function HomeScreen() {
       <div className="px-5 mt-5">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-[15px] font-bold text-[#333]">Today&apos;s Progress</h2>
-          <span className="text-[13px] text-[#999] font-medium">{dailyProgress} of 3 completed</span>
+          <span className="text-[13px] text-[#999] font-medium">{dailyProgress} of 4 completed</span>
         </div>
         <div className="flex gap-2">
           {exercises.map((ex, i) => (
@@ -200,16 +214,21 @@ function ExerciseCard({ exercise }: { exercise: typeof exercises[0] }) {
 
 function StartSessionButton({ checkAndUpdateStreak }: { checkAndUpdateStreak: () => void }) {
   const { dailyProgress, setScreen, gamesCompleted } = useGameStore();
-  const nextGame = ['memory', 'word', 'math'].find((g) => !gamesCompleted.includes(g as GameType));
+  const nextGame = ['memory', 'word', 'math', 'circuit'].find((g) => !gamesCompleted.includes(g as GameType));
 
   const handleStart = () => {
     checkAndUpdateStreak();
-    if (nextGame) setScreen(nextGame as 'memory' | 'word' | 'math');
+    if (nextGame) setScreen(nextGame as Screen);
   };
 
   return (
-    <button onClick={handleStart} className="btn-duolingo w-full text-[16px] mt-1" disabled={dailyProgress >= 3}>
-      {dailyProgress >= 3 ? 'All Done for Today!' : dailyProgress === 0 ? "Start Today's Session" : 'Continue Training'}
+    <>
+    <button onClick={handleStart} className="btn-duolingo w-full text-[16px] mt-1" disabled={dailyProgress >= 4}>
+      {dailyProgress >= 4 ? 'All Done for Today!' : dailyProgress === 0 ? "Start Today's Session" : 'Continue Training'}
     </button>
+    {dailyProgress >= 4 && (
+      <p className="text-center text-[12px] text-[#999] mt-1">All 4 exercises completed</p>
+    )}
+    </>
   );
 }

@@ -5,6 +5,7 @@ import HomeScreen from '@/components/HomeScreen';
 import MemoryMatch from '@/components/games/MemoryMatch';
 import WordPuzzle from '@/components/games/WordPuzzle';
 import MathSprint from '@/components/games/MathSprint';
+import CircuitConnect from '@/components/games/CircuitConnect';
 import ScoreScreen from '@/components/ScoreScreen';
 import BottomNav from '@/components/BottomNav';
 
@@ -18,6 +19,7 @@ export default function Page() {
       {currentScreen === 'word' && <WordPuzzle />}
       {currentScreen === 'daily' && <WordPuzzle isDaily />}
       {currentScreen === 'math' && <MathSprint />}
+      {currentScreen === 'circuit' && <CircuitConnect />}
       {currentScreen === 'score' && <ScoreScreen />}
       <BottomNav />
     </div>

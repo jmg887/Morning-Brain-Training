@@ -7,6 +7,7 @@ const GAME_INFO: Record<string, { name: string; icon: string; color: string }> =
   memory: { name: 'Memory Match', icon: '🧠', color: '#58CC02' },
   word: { name: 'Word Puzzle', icon: '📝', color: '#CE82FF' },
   math: { name: 'Math Sprint', icon: '⚡', color: '#1CB0F6' },
+  circuit: { name: 'Circuit Connect', icon: '🌐', color: '#FF9600' },
 };
 
 // Build a Wordle-style visual grid for daily share card
