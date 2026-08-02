@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type Screen = 'home' | 'memory' | 'word' | 'math' | 'score';
+export type Screen = 'home' | 'memory' | 'word' | 'math' | 'daily' | 'score';
 export type GameType = 'memory' | 'word' | 'math';
 
 export interface SessionResults {
@@ -27,12 +27,14 @@ interface GameState {
   gamesCompleted: GameType[];
   currentGame: GameType | null;
   sessionResults: SessionResults | null;
+  dailyWordCompleted: string | null; // date string e.g. '2026-08-03'
   completeSession: (results: SessionResults) => void;
   resetSession: () => void;
   checkAndUpdateStreak: () => void;
   getGreeting: () => string;
   getXPForNextLevel: () => number;
   getXPProgress: () => number;
+  hasCompletedDailyToday: () => boolean;
 }
 
 const getTodayStr = () => new Date().toISOString().split('T')[0];
@@ -60,6 +62,7 @@ export const useGameStore = create<GameState>()(
 
       currentGame: null,
       sessionResults: null,
+      dailyWordCompleted: null,
 
       completeSession: (results) => {
         const state = get();
@@ -92,6 +95,7 @@ export const useGameStore = create<GameState>()(
         set({
           sessionResults: results,
           currentScreen: 'score',
+          dailyWordCompleted: results.isDaily && results.game === 'word' ? getTodayStr() : state.dailyWordCompleted,
           xp: newXP,
           level: newLevel,
           streak: newStreak,
@@ -133,6 +137,9 @@ export const useGameStore = create<GameState>()(
         const xp = get().xp;
         return xp % 100;
       },
+      hasCompletedDailyToday: () => {
+        return get().dailyWordCompleted === getTodayStr();
+      },
     }),
     {
       name: 'braintrain-storage',
@@ -144,6 +151,7 @@ export const useGameStore = create<GameState>()(
         dailyProgress: state.dailyProgress,
         totalGamesPlayed: state.totalGamesPlayed,
         gamesCompleted: state.gamesCompleted,
+        dailyWordCompleted: state.dailyWordCompleted,
       }),
     }
   )

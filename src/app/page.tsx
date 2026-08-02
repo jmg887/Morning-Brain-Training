@@ -16,6 +16,7 @@ export default function Page() {
       {currentScreen === 'home' && <HomeScreen />}
       {currentScreen === 'memory' && <MemoryMatch />}
       {currentScreen === 'word' && <WordPuzzle />}
+      {currentScreen === 'daily' && <WordPuzzle isDaily />}
       {currentScreen === 'math' && <MathSprint />}
       {currentScreen === 'score' && <ScoreScreen />}
       <BottomNav />

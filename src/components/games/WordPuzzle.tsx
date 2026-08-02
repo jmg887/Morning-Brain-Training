@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameStore, type SessionResults } from '@/store/useGameStore';
+import { createSeededRandom, dateToSeed, seededShuffle, getTodaySeedStr } from '@/lib/seededRandom';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Rule {
@@ -146,9 +147,21 @@ function createInitialState(): PuzzleState {
 }
 
 // ─── Main WordPuzzle Component ───────────────────────────────────────────────
-export default function WordPuzzle() {
+interface WordPuzzleProps {
+  isDaily?: boolean;
+}
+export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
   // ── Rules for this session (stable across renders) ──
-  const [rules] = useState<Rule[]>(() => pickRules());
+  const [rules] = useState<Rule[]>(() => {
+    if (isDaily) {
+      const seed = dateToSeed(getTodaySeedStr());
+      const rng = createSeededRandom(seed);
+      const picked = seededShuffle(ALL_RULES, rng).slice(0, TOTAL_ROUNDS);
+      picked.sort((a, b) => (a.difficulty ?? 5) - (b.difficulty ?? 5));
+      return picked;
+    }
+    return pickRules();
+  });
 
   // ── Shuffled letters per round (updatable on shuffle) ──
   const initialShuffled = useRef(
@@ -298,7 +311,7 @@ export default function WordPuzzle() {
       accuracy,
       bestCombo: s.bestCombo,
       timeElapsed: 180 - s.globalTime,
-      isDaily: false,
+      isDaily,
       extra: s.totalWordsFound + ' words found',
     });
   }, []);
@@ -610,9 +623,16 @@ export default function WordPuzzle() {
           </span>
         </div>
 
-        <span className="text-xs font-semibold" style={{ color: '#999', whiteSpace: 'nowrap' }}>
-          Round {state.currentRound + 1} of 4
-        </span>
+        <div className="flex items-center gap-2">
+          {isDaily && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: '#FF9600', color: '#fff' }}>
+              DAILY
+            </span>
+          )}
+          <span className="text-xs font-semibold" style={{ color: '#999', whiteSpace: 'nowrap' }}>
+            Round {state.currentRound + 1} of {TOTAL_ROUNDS}
+          </span>
+        </div>
       </div>
 
       {/* ── Round Timer Bar ── */}

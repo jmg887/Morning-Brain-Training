@@ -1,6 +1,7 @@
 'use client';
 
 import { useGameStore } from '@/store/useGameStore';
+import { getDayNumber } from '@/lib/seededRandom';
 
 const GAME_INFO: Record<string, { name: string; icon: string; color: string }> = {
   memory: { name: 'Memory Match', icon: '🧠', color: '#58CC02' },
@@ -24,7 +25,15 @@ export default function ScoreScreen() {
   const xpGained = Math.round(r.score * 0.5) + r.stars * 20;
 
   const handleShare = async () => {
-    const text = `🌟 BrainTrain - ${info.name} \n${'⭐'.repeat(r.stars)} ${r.stars}/3 stars\nScore: ${r.score} | Accuracy: ${Math.round(r.accuracy)}%\nBest Combo: \u00d7${r.bestCombo}${r.extra ? ' | ' + r.extra : ''}`;
+    const starsStr = r.stars === 3 ? '⭐⭐⭐' : r.stars === 2 ? '⭐⭐' : '⭐';
+    let text: string;
+    if (r.isDaily) {
+      text = `🧠 BrainTrain #${getDayNumber()}
+${starsStr}  ${r.score}pts${r.extra ? ' | ' + r.extra : ''}
+🔥 ${streak}-day streak`;
+    } else {
+      text = `🧠 BrainTrain - ${info.name}\n${starsStr}  ${r.score}pts\nAccuracy: ${Math.round(r.accuracy)}% | Best Combo: \u00d7${r.bestCombo}${r.extra ? ' | ' + r.extra : ''}`;
+    }
     if (navigator.share) {
       try { await navigator.share({ title: 'BrainTrain', text }); } catch {}
     } else {
@@ -44,7 +53,7 @@ export default function ScoreScreen() {
         <div className="text-center mt-8">
           <div className="text-5xl mb-2">{info.icon}</div>
           <h1 className="text-2xl font-bold text-[#333]">{info.name}</h1>
-          <p className="text-sm text-[#999] mt-1">{r.isDaily ? 'Daily Challenge' : 'Practice'}</p>
+          <p className="text-sm mt-1" style={{ color: r.isDaily ? '#FF9600' : '#999' }}>{r.isDaily ? `Daily Challenge #${getDayNumber()}` : 'Practice'}</p>
         </div>
 
         {/* Stars */}

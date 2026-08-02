@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useGameStore, type GameType } from '@/store/useGameStore';
+import { getDayNumber } from '@/lib/seededRandom';
 
 const exercises = [
   {
@@ -44,7 +45,7 @@ const exercises = [
 ];
 
 export default function HomeScreen() {
-  const { streak, dailyProgress, xp, level, getGreeting, getXPForNextLevel, getXPProgress, checkAndUpdateStreak } = useGameStore();
+  const { streak, dailyProgress, xp, level, getGreeting, getXPForNextLevel, getXPProgress, checkAndUpdateStreak, hasCompletedDailyToday, setScreen } = useGameStore();
 
   useEffect(() => {
     let deferredPrompt: unknown = null;
@@ -94,6 +95,45 @@ export default function HomeScreen() {
             <div className="h-full bg-[#58CC02] rounded-full transition-all duration-500" style={{ width: `${xpPercent}%` }} />
           </div>
         </div>
+      </div>
+
+      {/* Daily Challenge */}
+      <div className="px-5 mt-5">
+        <button
+          onClick={() => { checkAndUpdateStreak(); setScreen('daily'); }}
+          disabled={hasCompletedDailyToday()}
+          className="w-full rounded-2xl p-4 flex items-center gap-3.5 text-left transition-all active:scale-[0.98]"
+          style={{
+            background: hasCompletedDailyToday() ? '#F0F0F0' : 'linear-gradient(135deg, #FF9600, #FF7A00)',
+            boxShadow: hasCompletedDailyToday() ? 'none' : '0 4px 16px rgba(255,150,0,0.25)',
+            opacity: hasCompletedDailyToday() ? 0.6 : 1,
+          }}
+        >
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: hasCompletedDailyToday() ? '#E0E0E0' : 'rgba(255,255,255,0.25)' }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill={hasCompletedDailyToday() ? '#999' : '#fff'}>
+              <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"/>
+              <text x="12" y="18" textAnchor="middle" fontSize="7" fontWeight="bold" fill={hasCompletedDailyToday() ? '#999' : '#fff'}>{getDayNumber()}</text>
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-[15px] font-bold" style={{ color: hasCompletedDailyToday() ? '#999' : '#fff' }}>Daily Challenge</span>
+              {hasCompletedDailyToday() && (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              )}
+            </div>
+            <p className="text-[12px] mt-0.5" style={{ color: hasCompletedDailyToday() ? '#BBB' : 'rgba(255,255,255,0.8)' }}>
+              {hasCompletedDailyToday() ? 'Completed! Come back tomorrow' : 'Same puzzle as everyone — compete with friends'}
+            </p>
+          </div>
+          {!hasCompletedDailyToday() && (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          )}
+        </button>
       </div>
 
       {/* Daily Progress */}
