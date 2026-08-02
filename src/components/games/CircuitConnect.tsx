@@ -3,6 +3,13 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameStore, type SessionResults } from '@/store/useGameStore';
 import { CIRCUIT_PUZZLES, type CircuitPuzzle } from '@/lib/circuitPuzzles';
+import {
+  generatePuzzle,
+  generateDailyPuzzle,
+  DIFFICULTY_CONFIGS,
+  type GeneratedPuzzle,
+} from '@/lib/circuitGenerator';
+import { getDayNumber } from '@/lib/seededRandom';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface CircuitConnectProps {
@@ -18,10 +25,23 @@ interface CircuitState {
   moveCount: number;
 }
 
+// ─── Unified puzzle type ────────────────────────────────────────────────────
+interface ActivePuzzle {
+  gridSize: number;
+  difficulty: number;
+  pairs: { color: string; colorHex: string; start: [number, number]; end: [number, number] }[];
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
-const MAX_TIME = 180;
 const GAP = 3;
 const SOLVED_DELAY = 1500;
+
+// Time limits by difficulty
+const TIME_LIMITS: Record<number, number> = {
+  1: 120, // easy
+  2: 180, // medium
+  3: 300, // hard
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const isAdjacent = (a: [number, number], b: [number, number]): boolean => {
@@ -38,18 +58,31 @@ const formatTime = (s: number) => {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function CircuitConnect({ isDaily = false }: CircuitConnectProps) {
-  const [puzzle] = useState<CircuitPuzzle>(
-    () => CIRCUIT_PUZZLES[Math.floor(Math.random() * CIRCUIT_PUZZLES.length)]
-  );
+  // ─── Difficulty state (practice mode only) ───────────────────────────────
+  const [difficulty, setDifficulty] = useState(2);
+  const [puzzleKey, setPuzzleKey] = useState(0); // forces re-gen
 
-  const { gridSize, pairs, blockers } = puzzle;
+  // ─── Generate or select puzzle ──────────────────────────────────────────
+  const puzzle: ActivePuzzle = useMemo(() => {
+    if (isDaily) {
+      const dayNum = getDayNumber();
+      const generated = generateDailyPuzzle(dayNum);
+      if (generated) return generated;
+      // Fallback to hand-crafted
+      const fallback = CIRCUIT_PUZZLES[dayNum % CIRCUIT_PUZZLES.length];
+      return { gridSize: fallback.gridSize, difficulty: fallback.difficulty, pairs: fallback.pairs };
+    }
+    // Practice mode: try generator, fallback to hand-crafted
+    const generated = generatePuzzle(difficulty);
+    if (generated) return generated;
+    const fallback = CIRCUIT_PUZZLES[Math.floor(Math.random() * CIRCUIT_PUZZLES.length)];
+    return { gridSize: fallback.gridSize, difficulty: fallback.difficulty, pairs: fallback.pairs };
+  }, [isDaily, difficulty, puzzleKey]);
 
-  // ─── Lookup maps (stable, built once) ───────────────────────────────────────
-  const blockerSet = useMemo(
-    () => new Set(blockers.map(([r, c]) => posKey(r, c))),
-    [blockers]
-  );
+  const { gridSize, pairs } = puzzle;
+  const MAX_TIME = TIME_LIMITS[puzzle.difficulty] || 180;
 
+  // ─── Lookup maps (stable, built once per puzzle) ─────────────────────────
   const dotMap = useMemo(() => {
     const m = new Map<
       string,
@@ -96,6 +129,19 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
   stateRef.current = state;
   const solvedRef = useRef(false);
 
+  // Reset game state when puzzle changes
+  useEffect(() => {
+    setState({
+      phase: 'playing',
+      paths: {},
+      currentPath: [],
+      activeColor: null,
+      timeElapsed: 0,
+      moveCount: 0,
+    });
+    solvedRef.current = false;
+  }, [puzzleKey, isDaily, difficulty]);
+
   // ─── Grid dimensions for SVG ────────────────────────────────────────────────
   const [gridWidth, setGridWidth] = useState(0);
 
@@ -110,7 +156,7 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [gridSize]);
 
   const cellStep = gridWidth / gridSize;
 
@@ -128,7 +174,7 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
       });
     }, 1000);
     return () => clearInterval(id);
-  }, [state.phase]);
+  }, [state.phase, MAX_TIME]);
 
   // ─── Completion check via useEffect ────────────────────────────────────────
   useEffect(() => {
@@ -154,10 +200,11 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
     );
 
     const timeBonus = Math.max(0, (MAX_TIME - state.timeElapsed) * 2);
-    const totalScore = 300 + timeBonus;
+    const baseScore = 200 + puzzle.difficulty * 100;
+    const totalScore = baseScore + timeBonus;
     let stars = 0;
-    if (state.timeElapsed < 60) stars = 3;
-    else if (state.timeElapsed < 120) stars = 2;
+    if (state.timeElapsed < MAX_TIME * 0.33) stars = 3;
+    else if (state.timeElapsed < MAX_TIME * 0.66) stars = 2;
     else stars = 1;
 
     const timerRef2 = setTimeout(() => {
@@ -168,13 +215,13 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
         accuracy: 100,
         bestCombo: 0,
         timeElapsed: state.timeElapsed,
-        isDaily: false,
-        extra: `${gridSize}x${gridSize} grid`,
+        isDaily,
+        extra: `${gridSize}\u00d7${gridSize} ${DIFFICULTY_CONFIGS[puzzle.difficulty]?.label || ''}`,
       });
     }, SOLVED_DELAY);
 
     return () => clearTimeout(timerRef2);
-  }, [state.paths, state.phase, state.timeElapsed, pairs, gridSize]);
+  }, [state.paths, state.phase, state.timeElapsed, pairs, gridSize, MAX_TIME, puzzle.difficulty, isDaily]);
 
   // ─── Cell hit testing ───────────────────────────────────────────────────────
   const getCellFromPoint = useCallback(
@@ -216,7 +263,6 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
             moveCount: prev.moveCount + 1,
           };
         });
-        // The useEffect watching state.paths will trigger solved check
         return true;
       }
       return false;
@@ -282,9 +328,6 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
       // Must be adjacent
       if (!isAdjacent(lastCell, cell)) return;
 
-      // Cannot go through blocker
-      if (blockerSet.has(cellKey)) return;
-
       // Cannot go through another color's completed path
       for (const [color, path] of Object.entries(s.paths)) {
         if (color === activeColor) continue;
@@ -311,21 +354,18 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
       });
 
       if (reachedEnd) {
-        // Complete immediately
         tryCompletePath(activeColor, newPath);
       }
     },
-    [getCellFromPoint, blockerSet, dotMap, pairMap, tryCompletePath]
+    [getCellFromPoint, dotMap, pairMap, tryCompletePath]
   );
 
   const handlePointerUp = useCallback(() => {
     const s = stateRef.current;
     if (!s.activeColor) return;
 
-    // If not already completed by the move handler
     tryCompletePath(s.activeColor, s.currentPath);
 
-    // Clear any incomplete path
     setState((prev) =>
       prev.activeColor
         ? { ...prev, activeColor: null, currentPath: [] }
@@ -346,6 +386,11 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
     solvedRef.current = false;
   }, []);
 
+  // ─── New Puzzle (practice mode) ────────────────────────────────────────────
+  const handleNewPuzzle = useCallback(() => {
+    setPuzzleKey((k) => k + 1);
+  }, []);
+
   // ─── Derived ────────────────────────────────────────────────────────────────
   const connectedCount = pairs.filter(
     (p) => state.paths[p.color] && state.paths[p.color].length > 0
@@ -361,17 +406,21 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
 
   const solvedStars =
     state.phase === 'solved'
-      ? state.timeElapsed < 60
+      ? state.timeElapsed < MAX_TIME * 0.33
         ? 3
-        : state.timeElapsed < 120
+        : state.timeElapsed < MAX_TIME * 0.66
           ? 2
           : 1
       : 0;
 
   const totalScore =
     state.phase === 'solved'
-      ? 300 + Math.max(0, (MAX_TIME - state.timeElapsed) * 2)
+      ? 200 + puzzle.difficulty * 100 + Math.max(0, (MAX_TIME - state.timeElapsed) * 2)
       : 0;
+
+  // ─── Grid sizing ───────────────────────────────────────────────────────────
+  const gridPx = Math.min(360, gridSize * 60);
+  const dotSize = gridSize <= 5 ? 22 : gridSize <= 6 ? 18 : 15;
 
   // ─── SVG helpers ────────────────────────────────────────────────────────────
   const buildPolylinePoints = (path: [number, number][]): string => {
@@ -423,14 +472,9 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
         <button
           onClick={() => useGameStore.getState().setScreen('home')}
           className="text-sm font-semibold flex items-center gap-1"
-          style={{
-            color: '#333333',
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-          }}
+          style={{ color: '#333333', background: 'none', border: 'none', cursor: 'pointer' }}
         >
-          ← Back
+          \u2190 Back
         </button>
 
         <div className="flex flex-col items-center flex-1 mx-4">
@@ -440,10 +484,7 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
           >
             <div
               className="h-full rounded-full transition-all duration-1000 ease-linear"
-              style={{
-                width: `${timerPct}%`,
-                background: timerColor,
-              }}
+              style={{ width: `${timerPct}%`, background: timerColor }}
             />
           </div>
           <span className="text-xs font-medium mt-1" style={{ color: '#999' }}>
@@ -451,26 +492,52 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
           </span>
         </div>
 
-        <span
-          className="text-xs font-semibold"
-          style={{ color: '#999', whiteSpace: 'nowrap' }}
-        >
-          {gridSize}×{gridSize}
-        </span>
+        <div className="flex flex-col items-end">
+          <span className="text-xs font-semibold" style={{ color: '#999', whiteSpace: 'nowrap' }}>
+            {gridSize}\u00d7{gridSize}
+          </span>
+          {isDaily && (
+            <span className="text-[10px] font-bold mt-0.5" style={{ color: '#FF9600', background: '#FFF5E6', padding: '1px 6px', borderRadius: 6 }}>
+              DAILY
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* ── Subtitle ── */}
+      {/* ── Difficulty selector (practice only) ── */}
+      {!isDaily && (
+        <div className="flex items-center gap-2 mb-3">
+          {([1, 2, 3] as const).map((d) => {
+            const cfg = DIFFICULTY_CONFIGS[d];
+            const active = difficulty === d;
+            return (
+              <button
+                key={d}
+                onClick={() => { setDifficulty(d); setPuzzleKey((k) => k + 1); }}
+                className="px-4 py-1.5 rounded-full text-xs font-bold transition-all"
+                style={{
+                  background: active ? cfg?.label === 'Easy' ? '#58CC02' : cfg?.label === 'Medium' ? '#1CB0F6' : '#AF52DE' : '#F0F0F0',
+                  color: active ? '#fff' : '#999',
+                  border: active ? 'none' : '1.5px solid #E0E0E0',
+                  cursor: 'pointer',
+                }}
+              >
+                {cfg?.label || `D${d}`}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Daily subtitle / practice subtitle ── */}
       <p className="text-sm font-medium mb-4" style={{ color: '#777' }}>
-        Connect matching colors
+        {isDaily ? `Daily Challenge #${getDayNumber()} \u2014 ${DIFFICULTY_CONFIGS[puzzle.difficulty]?.label || ''}` : 'Connect matching colors'}
       </p>
 
       {/* ── Grid ── */}
       <div
         className="relative mb-4"
-        style={{
-          width: Math.min(340, gridSize * 72),
-          height: Math.min(340, gridSize * 72),
-        }}
+        style={{ width: gridPx, height: gridPx }}
       >
         <div
           ref={gridRef}
@@ -492,14 +559,11 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
             const row = Math.floor(idx / gridSize);
             const col = idx % gridSize;
             const key = posKey(row, col);
-            const isBlocker = blockerSet.has(key);
             const dotInfo = dotMap.get(key);
             const pathInfo = cellColors.get(key);
 
             let cellBg = '#FFFFFF';
-            if (isBlocker) {
-              cellBg = '#E0E0E0';
-            } else if (pathInfo) {
+            if (pathInfo) {
               cellBg = pathInfo.isCurrent
                 ? pathInfo.colorHex + '80'
                 : pathInfo.colorHex + '4D';
@@ -512,8 +576,8 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
                 data-col={col}
                 style={{
                   background: cellBg,
-                  borderRadius: 8,
-                  border: isBlocker ? 'none' : '1px solid #E8E8E8',
+                  borderRadius: gridSize <= 5 ? 8 : 6,
+                  border: '1px solid #E8E8E8',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -521,23 +585,11 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
                   position: 'relative',
                 }}
               >
-                {isBlocker && (
-                  <span
-                    style={{
-                      fontSize: 24,
-                      fontWeight: 'bold',
-                      color: '#CCC',
-                      lineHeight: 1,
-                    }}
-                  >
-                    ×
-                  </span>
-                )}
                 {dotInfo && (
                   <div
                     style={{
-                      width: 22,
-                      height: 22,
+                      width: dotSize,
+                      height: dotSize,
                       borderRadius: '50%',
                       background: dotInfo.colorHex,
                       boxShadow: `0 2px 6px ${dotInfo.colorHex}40`,
@@ -554,13 +606,9 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
         {/* ── SVG Path Overlay ── */}
         <svg
           style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            pointerEvents: 'none',
-            zIndex: 5,
+            position: 'absolute', top: 0, left: 0,
+            width: '100%', height: '100%',
+            pointerEvents: 'none', zIndex: 5,
           }}
         >
           <defs>
@@ -621,9 +669,7 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
             <div key={p.color} className="flex items-center gap-1.5">
               <div
                 style={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: '50%',
+                  width: 12, height: 12, borderRadius: '50%',
                   background: p.colorHex,
                   opacity: connected ? 1 : 0.35,
                 }}
@@ -632,7 +678,7 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
                 className="text-xs font-medium"
                 style={{ color: connected ? '#333' : '#BBB' }}
               >
-                {connected ? '✓' : '—'}
+                {connected ? '\u2713' : '\u2014'}
               </span>
             </div>
           );
@@ -642,20 +688,33 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
         </span>
       </div>
 
-      {/* ── Reset Button ── */}
-      <button
-        onClick={handleReset}
-        className="px-5 py-3 rounded-xl text-base font-bold"
-        style={{
-          background: '#F0F0F0',
-          color: '#777',
-          border: '2px solid #E0E0E0',
-          borderBottom: '4px solid #D0D0D0',
-          cursor: 'pointer',
-        }}
-      >
-        Clear All
-      </button>
+      {/* ── Action Buttons ── */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleReset}
+          className="px-5 py-3 rounded-xl text-sm font-bold"
+          style={{
+            background: '#F0F0F0', color: '#777',
+            border: '2px solid #E0E0E0', borderBottom: '4px solid #D0D0D0',
+            cursor: 'pointer',
+          }}
+        >
+          Clear All
+        </button>
+        {!isDaily && (
+          <button
+            onClick={handleNewPuzzle}
+            className="px-5 py-3 rounded-xl text-sm font-bold"
+            style={{
+              background: 'linear-gradient(135deg, #FF9600, #FF7A00)', color: '#fff',
+              border: 'none', borderBottom: '4px solid #CC7A00',
+              cursor: 'pointer',
+            }}
+          >
+            New Puzzle
+          </button>
+        )}
+      </div>
 
       {/* ── Solved Overlay ── */}
       {state.phase === 'solved' && (
@@ -666,22 +725,14 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
           <div
             className="text-center p-6 rounded-2xl mx-4"
             style={{
-              background: '#fff',
-              maxWidth: 320,
-              width: '100%',
+              background: '#fff', maxWidth: 320, width: '100%',
               animation: 'cc-slide-up 0.4s ease',
             }}
           >
-            <div
-              className="text-2xl font-black mb-1"
-              style={{ color: '#333' }}
-            >
+            <div className="text-2xl font-black mb-1" style={{ color: '#333' }}>
               Puzzle Solved!
             </div>
-            <div
-              className="text-lg font-bold mb-3"
-              style={{ color: '#58CC02' }}
-            >
+            <div className="text-lg font-bold mb-3" style={{ color: '#58CC02' }}>
               Score: {totalScore}
             </div>
             <div className="text-sm mb-3" style={{ color: '#999' }}>
@@ -691,12 +742,9 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
               {[1, 2, 3].map((s) => (
                 <span
                   key={s}
-                  style={{
-                    fontSize: 32,
-                    opacity: s <= solvedStars ? 1 : 0.2,
-                  }}
+                  style={{ fontSize: 32, opacity: s <= solvedStars ? 1 : 0.2 }}
                 >
-                  ⭐
+                  {'\u2b50'}
                 </span>
               ))}
             </div>
@@ -705,9 +753,7 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
               className="w-full py-3 rounded-xl text-base font-bold"
               style={{
                 background: 'linear-gradient(135deg, #58CC02, #58A700)',
-                color: '#fff',
-                border: 'none',
-                cursor: 'pointer',
+                color: '#fff', border: 'none', cursor: 'pointer',
               }}
             >
               Done
@@ -725,22 +771,14 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
           <div
             className="text-center p-6 rounded-2xl mx-4"
             style={{
-              background: '#fff',
-              maxWidth: 320,
-              width: '100%',
+              background: '#fff', maxWidth: 320, width: '100%',
               animation: 'cc-slide-up 0.4s ease',
             }}
           >
-            <div
-              className="text-2xl font-black mb-3"
-              style={{ color: '#333' }}
-            >
+            <div className="text-2xl font-black mb-3" style={{ color: '#333' }}>
               Time&apos;s Up!
             </div>
-            <div
-              className="text-base font-bold mb-4"
-              style={{ color: '#FF3B30' }}
-            >
+            <div className="text-base font-bold mb-4" style={{ color: '#FF3B30' }}>
               {connectedCount} of {pairs.length} pairs connected
             </div>
             <button
@@ -748,9 +786,7 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
               className="w-full py-3 rounded-xl text-base font-bold"
               style={{
                 background: 'linear-gradient(135deg, #58CC02, #58A700)',
-                color: '#fff',
-                border: 'none',
-                cursor: 'pointer',
+                color: '#fff', border: 'none', cursor: 'pointer',
               }}
             >
               Done
@@ -762,14 +798,8 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
       {/* ── Keyframes ── */}
       <style>{`
         @keyframes cc-slide-up {
-          0% {
-            opacity: 0;
-            transform: translateY(30px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0);
-          }
+          0% { opacity: 0; transform: translateY(30px); }
+          100% { opacity: 1; transform: translateY(0); }
         }
       `}</style>
     </div>
