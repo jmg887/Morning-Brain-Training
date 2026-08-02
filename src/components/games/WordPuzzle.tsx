@@ -9,6 +9,7 @@ interface Rule {
   category: string;
   letters: string[];
   validWords: string[];
+  difficulty?: number;
 }
 
 interface PuzzleState {
@@ -24,7 +25,6 @@ interface PuzzleState {
   totalCorrect: number;
   totalAttempts: number;
   totalWordsFound: number;
-  ruleCracked: boolean;
   feedback: 'correct' | 'wrong' | 'already' | null;
   feedbackWord: string;
   scorePop: string | null;
@@ -32,34 +32,69 @@ interface PuzzleState {
   shakeKey: number;
   wordKey: number;
   typewriterText: string;
-  answeredRule: boolean;
 }
 
-// ─── Rules (pick 4 of these for 4 rounds) ────────────────────────────────────
+// ─── Rules (ordered easy → hard, pick 4 for 4 rounds) ─────────────────────
 const ALL_RULES: Rule[] = [
   {
     description: '3-letter words',
     category: 'pattern',
     letters: ['C', 'A', 'T', 'D', 'O', 'G', 'R', 'U', 'N', 'S'],
-    validWords: ['cat', 'dog', 'run', 'cod', 'rot', 'rag', 'dug', 'rod', 'tar', 'oat', 'dot', 'got', 'nut', 'ran', 'tag', 'son', 'nor', 'rug', 'sag', 'out', 'cur', 'cut', 'act', 'car', 'cot', 'cog'],
+    validWords: [
+      'act', 'ado', 'ago', 'ant', 'arc', 'art', 'can', 'car', 'cat', 'cog',
+      'con', 'cot', 'cud', 'cur', 'cut', 'dag', 'dot', 'dug', 'duo', 'dun',
+      'god', 'gnu', 'got', 'gun', 'gut', 'nag', 'nor', 'nut', 'oar', 'oat',
+      'our', 'out', 'rag', 'ran', 'rat', 'rod', 'rot', 'rug', 'run', 'rut',
+      'sag', 'sat', 'son', 'sot', 'sun', 'tag', 'tar', 'tat', 'ton', 'too',
+      'tog', 'tug',
+    ],
+    difficulty: 1,
   },
   {
     description: "Words starting with 'S'",
     category: 'pattern',
     letters: ['S', 'T', 'A', 'R', 'I', 'N', 'G', 'O', 'D', 'E'],
-    validWords: ['sag', 'sin', 'sir', 'sat', 'set', 'star', 'stir', 'sing', 'song', 'sore', 'sage', 'sane', 'sand', 'sire', 'sort', 'side', 'store', 'stage', 'stone'],
+    validWords: [
+      'sad', 'sag', 'sand', 'sane', 'sang', 'sari', 'sat', 'sea', 'set', 'side',
+      'sing', 'sire', 'sit', 'soda', 'son', 'song', 'sore', 'sort', 'sot', 'stage',
+      'stair', 'stain', 'star', 'stare', 'sting', 'stir', 'stone', 'stond', 'stong',
+      'store', 'stride',
+    ],
+    difficulty: 2,
   },
   {
     description: "Words ending in 'AT'",
     category: 'pattern',
     letters: ['C', 'A', 'T', 'B', 'H', 'M', 'R', 'S', 'F', 'L'],
     validWords: ['cat', 'bat', 'hat', 'mat', 'rat', 'sat', 'fat', 'flat', 'brat', 'that'],
+    difficulty: 3,
   },
   {
-    description: 'Animals',
-    category: 'semantic',
-    letters: ['C', 'A', 'T', 'D', 'O', 'G', 'F', 'X', 'B', 'E', 'R'],
-    validWords: ['cat', 'dog', 'fox', 'bat', 'bear', 'boar', 'cobra', 'doe', 'frog', 'crab', 'goat', 'ox', 'rat'],
+    description: "Words containing 'OO'",
+    category: 'pattern',
+    letters: ['G', 'O', 'O', 'D', 'L', 'K', 'B', 'T', 'F', 'W'],
+    validWords: [
+      'good', 'look', 'book', 'took', 'wood', 'foot', 'boot', 'tool',
+      'loot', 'food', 'wolf',
+    ],
+    difficulty: 4,
+  },
+  {
+    description: "Words ending in 'OG'",
+    category: 'pattern',
+    letters: ['D', 'O', 'G', 'F', 'R', 'C', 'B', 'L', 'T', 'J'],
+    validWords: ['dog', 'fog', 'log', 'bog', 'cog', 'jog', 'frog', 'clog', 'flog'],
+    difficulty: 3,
+  },
+  {
+    description: 'Words with double letters',
+    category: 'pattern',
+    letters: ['S', 'E', 'E', 'T', 'L', 'B', 'O', 'K', 'F', 'L'],
+    validWords: [
+      'see', 'bee', 'feel', 'feet', 'left', 'belt', 'fell', 'felt', 'best',
+      'flee', 'flock', 'steep', 'fleet', 'beef', 'beet', 'keep', 'keel',
+    ],
+    difficulty: 3,
   },
 ];
 
@@ -78,9 +113,11 @@ function shuffleArray<T>(array: T[]): T[] {
   return arr;
 }
 
-// ─── Pick 4 random rules (shuffled) ──────────────────────────────────────────
+// ─── Pick 4 random rules (shuffled, sorted by difficulty) ──────────────────
 function pickRules(): Rule[] {
-  return shuffleArray(ALL_RULES).slice(0, TOTAL_ROUNDS);
+  const shuffled = shuffleArray([...ALL_RULES]);
+  shuffled.sort((a, b) => (a.difficulty ?? 5) - (b.difficulty ?? 5));
+  return shuffled.slice(0, TOTAL_ROUNDS);
 }
 
 // ─── Initial State Factory ───────────────────────────────────────────────────
@@ -98,7 +135,6 @@ function createInitialState(): PuzzleState {
     totalCorrect: 0,
     totalAttempts: 0,
     totalWordsFound: 0,
-    ruleCracked: false,
     feedback: null,
     feedbackWord: '',
     scorePop: null,
@@ -106,7 +142,6 @@ function createInitialState(): PuzzleState {
     shakeKey: 0,
     wordKey: 0,
     typewriterText: '',
-    answeredRule: false,
   };
 }
 
@@ -141,7 +176,6 @@ export default function WordPuzzle() {
     onSubmit: () => void;
     onClear: () => void;
     onShuffle: () => void;
-    onAnswerRule: (cracked: boolean) => void;
   } | null>(null);
 
   // ── Refs for values needed in handlers/timer ──
@@ -299,7 +333,6 @@ export default function WordPuzzle() {
         feedback: null,
         feedbackWord: '',
         phase: 'transition',
-        answeredRule: false,
       });
       // Auto-advance after 3 seconds
       setTimeout(() => {
@@ -456,13 +489,13 @@ export default function WordPuzzle() {
 
     const round = s.currentRound;
     const currentLetters = shuffledLettersRef.current[round];
-  
+
     // Remap selected indices based on old positions
     const oldSelected = s.selectedIndices;
     const selectedLetters = oldSelected.map((i) => currentLetters[i]);
 
     const newShuffled = shuffleArray(currentLetters);
-  
+
     // Find new indices for the previously selected letters
     const newSelected: number[] = [];
     const usedIndices = new Set<number>();
@@ -487,18 +520,6 @@ export default function WordPuzzle() {
     });
   }, [setState]);
 
-  // ── On answer rule (transition screen) ──
-  const onAnswerRule = useCallback(
-    (cracked: boolean) => {
-      if (gameEndedRef.current) return;
-      const s = stateRef.current;
-      if (s.phase !== 'transition' || s.answeredRule) return;
-
-      setState({ answeredRule: true, ruleCracked: cracked });
-    },
-    [setState]
-  );
-
   // ── Assign handlers to ref ──
   useEffect(() => {
     handlersRef.current = {
@@ -508,9 +529,8 @@ export default function WordPuzzle() {
       onSubmit,
       onClear,
       onShuffle,
-      onAnswerRule,
     };
-  }, [tick, onLetterTap, onWordTap, onSubmit, onClear, onShuffle, onAnswerRule]);
+  }, [tick, onLetterTap, onWordTap, onSubmit, onClear, onShuffle]);
 
   // ── Start timer + typewriter on mount ──
   useEffect(() => {
@@ -980,60 +1000,6 @@ export default function WordPuzzle() {
                 </div>
               </div>
             </div>
-
-            {!state.answeredRule && (
-              <div className="mb-2">
-                <div
-                  className="text-sm font-medium mb-3"
-                  style={{ color: '#666' }}
-                >
-                  Did you figure it out?
-                </div>
-                <div className="flex gap-3 justify-center">
-                  <button
-                    onClick={() =>
-                      handlersRef.current?.onAnswerRule(true)
-                    }
-                    className="px-6 py-2.5 rounded-xl text-sm font-bold"
-                    style={{
-                      background: 'linear-gradient(135deg, #58CC02, #58A700)',
-                      color: '#fff',
-                      border: 'none',
-                      borderBottom: '3px solid #46A302',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Yes!
-                  </button>
-                  <button
-                    onClick={() =>
-                      handlersRef.current?.onAnswerRule(false)
-                    }
-                    className="px-6 py-2.5 rounded-xl text-sm font-bold"
-                    style={{
-                      background: '#F0F0F0',
-                      color: '#777',
-                      border: '2px solid #E0E0E0',
-                      borderBottom: '3px solid #D0D0D0',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Not quite
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {state.answeredRule && (
-              <div
-                className="text-sm font-medium"
-                style={{
-                  color: state.ruleCracked ? '#58CC02' : '#999',
-                }}
-              >
-                {state.ruleCracked ? '🎉 Nice!' : 'Keep practicing!'}
-              </div>
-            )}
           </div>
         </div>
       )}
