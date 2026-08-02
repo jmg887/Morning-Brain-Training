@@ -33,6 +33,7 @@ interface PuzzleState {
   shakeKey: number;
   wordKey: number;
   typewriterText: string;
+  wordsPerRound: number[]; // track words found in each round
 }
 
 // ─── Rules (ordered easy → hard, pick 4 for 4 rounds) ─────────────────────
@@ -143,6 +144,7 @@ function createInitialState(): PuzzleState {
     shakeKey: 0,
     wordKey: 0,
     typewriterText: '',
+    wordsPerRound: [],
   };
 }
 
@@ -299,6 +301,16 @@ export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
     const s = stateRef.current;
     const accuracy = s.totalAttempts > 0 ? Math.round((s.totalCorrect / s.totalAttempts) * 100) : 0;
 
+    // Build wordsPerRound if game ended mid-round (push current round's count)
+    const roundScores = [...s.wordsPerRound];
+    if (roundScores.length < TOTAL_ROUNDS && s.foundWords.length > 0) {
+      roundScores.push(s.foundWords.length);
+    }
+    // Pad with 0 if ended before some rounds
+    while (roundScores.length < TOTAL_ROUNDS) {
+      roundScores.push(0);
+    }
+
     let stars = 0;
     if (accuracy >= 90) stars = 3;
     else if (accuracy >= 70) stars = 2;
@@ -313,8 +325,9 @@ export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
       timeElapsed: 180 - s.globalTime,
       isDaily,
       extra: s.totalWordsFound + ' words found',
+      roundScores: isDaily ? roundScores : undefined,
     });
-  }, []);
+  }, [isDaily]);
 
   useEffect(() => {
     if (state.phase === 'ended') {
@@ -338,7 +351,9 @@ export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
     }
 
     if (newRoundTime <= 0) {
-      // Round time expired -> transition
+      // Round time expired -> save words count and transition
+      const currentRoundWordCount = s.foundWords.length;
+      const updatedWordsPerRound = [...s.wordsPerRound, currentRoundWordCount];
       setState({
         roundTime: 0,
         globalTime: newGlobalTime,
@@ -346,6 +361,7 @@ export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
         feedback: null,
         feedbackWord: '',
         phase: 'transition',
+        wordsPerRound: updatedWordsPerRound,
       });
       // Auto-advance after 3 seconds
       setTimeout(() => {

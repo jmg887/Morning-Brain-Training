@@ -13,6 +13,7 @@ export interface SessionResults {
   timeElapsed: number;
   isDaily: boolean;
   extra?: string;
+  roundScores?: number[]; // words found per round (for daily share card)
 }
 
 interface GameState {
