@@ -1,0 +1,175 @@
+'use client';
+
+import { useEffect } from 'react';
+import { useGameStore, type GameType } from '@/store/useGameStore';
+
+const exercises = [
+  {
+    id: 'memory' as GameType,
+    name: 'Memory Match',
+    desc: 'Memorize card positions under time pressure',
+    color: '#58CC02',
+    bgColor: '#F0FAE0',
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#58CC02" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2a8 8 0 0 0-8 8c0 3.4 2.1 6.3 5 7.5V20h6v-2.5c2.9-1.2 5-4.1 5-7.5a8 8 0 0 0-8-8z"/>
+        <line x1="10" y1="22" x2="14" y2="22"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'word' as GameType,
+    name: 'Word Puzzle',
+    desc: 'Find words that match a hidden rule',
+    color: '#CE82FF',
+    bgColor: '#F8F0FF',
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#CE82FF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 7h16"/><path d="M4 12h10"/><path d="M4 17h14"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'math' as GameType,
+    name: 'Math Sprint',
+    desc: 'Spot the trap — pick the right answer fast',
+    color: '#1CB0F6',
+    bgColor: '#E8F6FF',
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#1CB0F6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+      </svg>
+    ),
+  },
+];
+
+export default function HomeScreen() {
+  const { streak, dailyProgress, xp, level, getGreeting, getXPForNextLevel, getXPProgress, checkAndUpdateStreak } = useGameStore();
+
+  useEffect(() => {
+    let deferredPrompt: unknown = null;
+    const handler = (e: Event) => {
+      e.preventDefault();
+      deferredPrompt = e;
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const greeting = getGreeting();
+  const xpProg = getXPProgress();
+  const xpPercent = (xpProg / 100) * 100;
+
+  return (
+    <div className="min-h-[100dvh] pb-24 pt-safe">
+      <div className="h-6" />
+
+      {/* Greeting */}
+      <div className="px-5 pt-4 pb-2">
+        <h1 className="text-[26px] font-bold text-[#333] leading-tight">{greeting}</h1>
+        <p className="text-[15px] text-[#999] mt-0.5">Ready to train your brain?</p>
+      </div>
+
+      {/* Streak + XP Row */}
+      <div className="flex gap-3 px-5 mt-3">
+        <div className="flex items-center gap-2.5 bg-[#FFF5E6] rounded-2xl px-4 py-3 flex-1" style={{ boxShadow: '0 2px 8px rgba(255,150,0,0.08)' }}>
+          <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #FF9600, #FFB84D)' }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+              <path d="M12 2C10.5 5.5 8 7 8 10c0 2.2 1.8 4 4 4s4-1.8 4-4c0-3-2.5-4.5-4-8z"/>
+              <path d="M12 14c-1.5 3-4 4.5-4 7.5 0 1.1.9 2 2 2h4c1.1 0 2-.9 2-2 0-3-2.5-4.5-4-7.5z" opacity="0.7"/>
+            </svg>
+          </div>
+          <div>
+            <div className="text-[22px] font-bold text-[#FF9600] leading-none">{streak}</div>
+            <div className="text-[11px] text-[#CC7A00] font-medium">day streak</div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl px-4 py-3 flex-1 flex flex-col justify-between" style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+          <div className="flex items-center justify-between">
+            <span className="text-[12px] font-semibold text-[#999]">Level {level}</span>
+            <span className="text-[12px] font-bold text-[#58CC02]">{xpProg}/100 XP</span>
+          </div>
+          <div className="w-full h-2 bg-[#F0F0F0] rounded-full mt-1.5 overflow-hidden">
+            <div className="h-full bg-[#58CC02] rounded-full transition-all duration-500" style={{ width: `${xpPercent}%` }} />
+          </div>
+        </div>
+      </div>
+
+      {/* Daily Progress */}
+      <div className="px-5 mt-5">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-[15px] font-bold text-[#333]">Today&apos;s Progress</h2>
+          <span className="text-[13px] text-[#999] font-medium">{dailyProgress} of 3 completed</span>
+        </div>
+        <div className="flex gap-2">
+          {exercises.map((ex, i) => (
+            <div key={ex.id} className="flex-1 h-2 rounded-full overflow-hidden" style={{ backgroundColor: '#F0F0F0' }}>
+              <div className="h-full rounded-full transition-all duration-500" style={{ width: dailyProgress >= (i + 1) ? '100%' : '0%', backgroundColor: ex.color }} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Exercise Cards */}
+      <div className="px-5 mt-5 space-y-3">
+        <h2 className="text-[15px] font-bold text-[#333]">Exercises</h2>
+        {exercises.map((ex) => (
+          <ExerciseCard key={ex.id} exercise={ex} />
+        ))}
+      </div>
+
+      {/* Start CTA */}
+      <div className="px-5 mt-6">
+        <StartSessionButton checkAndUpdateStreak={checkAndUpdateStreak} />
+      </div>
+    </div>
+  );
+}
+
+function ExerciseCard({ exercise }: { exercise: typeof exercises[0] }) {
+  const { setScreen, gamesCompleted } = useGameStore();
+  const isDone = gamesCompleted.includes(exercise.id);
+
+  return (
+    <button
+      onClick={() => setScreen(exercise.id)}
+      className="w-full bg-white rounded-2xl p-4 flex items-center gap-3.5 text-left transition-all active:scale-[0.98]"
+      style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.05)', borderLeft: `4px solid ${exercise.color}`, opacity: isDone ? 0.6 : 1 }}
+    >
+      <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: exercise.bgColor }}>
+        {exercise.icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-[15px] font-bold text-[#333]">{exercise.name}</span>
+          {isDone && (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58CC02" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          )}
+        </div>
+        <p className="text-[12px] text-[#999] mt-0.5 truncate">{exercise.desc}</p>
+      </div>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#CCC" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="9 18 15 12 9 6"/>
+      </svg>
+    </button>
+  );
+}
+
+function StartSessionButton({ checkAndUpdateStreak }: { checkAndUpdateStreak: () => void }) {
+  const { dailyProgress, setScreen, gamesCompleted } = useGameStore();
+  const nextGame = ['memory', 'word', 'math'].find((g) => !gamesCompleted.includes(g as GameType));
+
+  const handleStart = () => {
+    checkAndUpdateStreak();
+    if (nextGame) setScreen(nextGame as 'memory' | 'word' | 'math');
+  };
+
+  return (
+    <button onClick={handleStart} className="btn-duolingo w-full text-[16px] mt-1" disabled={dailyProgress >= 3}>
+      {dailyProgress >= 3 ? 'All Done for Today!' : dailyProgress === 0 ? "Start Today's Session" : 'Continue Training'}
+    </button>
+  );
+}
