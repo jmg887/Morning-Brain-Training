@@ -170,17 +170,42 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
     else stars = 1;
 
     const timerRef2 = setTimeout(() => {
- // Auto-progress for practice mode
+      // Auto-progress for practice mode
       if (!isDaily) {
         useGameStore.getState().advanceCircuitLevel(stars);
       }
-      useGameStore.getState().completeSession({
-        game: 'circuit' as SessionResults['game'],
-        score: totalScore, stars, accuracy: 100, bestCombo: 0,
-        timeElapsed: state.timeElapsed, isDaily,
-        extra: `Lv${puzzle.level} ${gridSize}\u00d7${gridSize}`,
-        circuitLevel: puzzle.level,
-      });
+      // For daily: route to score screen as usual.
+      // For practice: stay in-game so player can hit "Next Puzzle".
+      if (isDaily) {
+        useGameStore.getState().completeSession({
+          game: 'circuit' as SessionResults['game'],
+          score: totalScore, stars, accuracy: 100, bestCombo: 0,
+          timeElapsed: state.timeElapsed, isDaily: true,
+          extra: `Lv${puzzle.level} ${gridSize}\u00d7${gridSize}`,
+          circuitLevel: puzzle.level,
+        });
+      } else {
+        // Still record XP/streak without navigating away
+        const today = new Date().toISOString().split('T')[0];
+        const curState = useGameStore.getState();
+        const xpGained = Math.round(totalScore * 0.5) + stars * 20;
+        const newXP = curState.xp + xpGained;
+        const newLvl = Math.floor(newXP / 100) + 1;
+        let newStreak = curState.streak;
+        if (!curState.lastPlayDate) { newStreak = 1; } else {
+          const diff = Math.floor((new Date(today).getTime() - new Date(curState.lastPlayDate).getTime()) / 86400000);
+          if (diff === 1) newStreak = curState.streak + 1;
+          else if (diff > 1) newStreak = 1;
+        }
+        const newGames = [...curState.gamesCompleted];
+        if (!newGames.includes('circuit')) newGames.push('circuit');
+        useGameStore.setState({
+          xp: newXP, level: newLvl, streak: newStreak,
+          totalGamesPlayed: curState.totalGamesPlayed + 1,
+          dailyProgress: newGames.length, gamesCompleted: newGames,
+          lastPlayDate: today,
+        });
+      }
     }, SOLVED_DELAY);
 
     return () => clearTimeout(timerRef2);
@@ -529,13 +554,33 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
                 <span key={s} style={{ fontSize: 32, opacity: s <= solvedStars ? 1 : 0.2 }}>{'\u2b50'}</span>
               ))}
             </div>
-            <button
-              onClick={() => useGameStore.getState().setScreen('home')}
-              className="w-full py-3 rounded-xl text-base font-bold"
-              style={{ background: 'linear-gradient(135deg, #58CC02, #58A700)', color: '#fff', border: 'none', cursor: 'pointer' }}
-            >
-              Done
-            </button>
+            {/* Practice: Next Puzzle (primary) + Done (secondary) */}
+            {!isDaily ? (
+              <>
+                <button
+                  onClick={handleNewPuzzle}
+                  className="w-full py-3 rounded-xl text-base font-bold mb-2"
+                  style={{ background: 'linear-gradient(135deg, #58CC02, #58A700)', color: '#fff', border: 'none', borderBottom: '4px solid #46A302', cursor: 'pointer' }}
+                >
+                  Next Puzzle
+                </button>
+                <button
+                  onClick={() => useGameStore.getState().setScreen('home')}
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold"
+                  style={{ background: 'none', color: '#999', border: 'none', cursor: 'pointer' }}
+                >
+                  Back to Home
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => useGameStore.getState().setScreen('home')}
+                className="w-full py-3 rounded-xl text-base font-bold"
+                style={{ background: 'linear-gradient(135deg, #58CC02, #58A700)', color: '#fff', border: 'none', cursor: 'pointer' }}
+              >
+                Done
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -551,13 +596,32 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
                 Level {circuitLevel} {'\u2014'} {levelConfig.tier}
               </div>
             )}
-            <button
-              onClick={() => useGameStore.getState().setScreen('home')}
-              className="w-full py-3 rounded-xl text-base font-bold"
-              style={{ background: 'linear-gradient(135deg, #58CC02, #58A700)', color: '#fff', border: 'none', cursor: 'pointer' }}
-            >
-              Done
-            </button>
+            {!isDaily ? (
+              <>
+                <button
+                  onClick={handleNewPuzzle}
+                  className="w-full py-3 rounded-xl text-base font-bold mb-2"
+                  style={{ background: 'linear-gradient(135deg, #FF9600, #FF7A00)', color: '#fff', border: 'none', borderBottom: '4px solid #CC7A00', cursor: 'pointer' }}
+                >
+                  Try Again
+                </button>
+                <button
+                  onClick={() => useGameStore.getState().setScreen('home')}
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold"
+                  style={{ background: 'none', color: '#999', border: 'none', cursor: 'pointer' }}
+                >
+                  Back to Home
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => useGameStore.getState().setScreen('home')}
+                className="w-full py-3 rounded-xl text-base font-bold"
+                style={{ background: 'linear-gradient(135deg, #58CC02, #58A700)', color: '#fff', border: 'none', cursor: 'pointer' }}
+              >
+                Done
+              </button>
+            )}
           </div>
         </div>
       )}
