@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useGameStore, type SessionResults } from '@/store/useGameStore';
-import { createSeededRandom, dateToSeed, seededShuffle, getTodaySeedStr } from '@/lib/seededRandom';
+import { useGameStore } from '@/store/useGameStore';
+import { createSeededRandom, dateToSeed, getTodaySeedStr } from '@/lib/seededRandom';
+import { generateRules } from '@/lib/wordRuleGenerator';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Rule {
@@ -37,122 +38,18 @@ interface PuzzleState {
   allFoundBonus: number; // time bonus seconds awarded for finding all words
 }
 
-// ─── Rules (pick 4 for 4 rounds) ────────────────────────────────────────
-// Categories: 'ending', 'starting', 'containing', 'length'
-const ALL_RULES: Rule[] = [
-  {
-    description: '3-letter words',
-    category: 'length',
-    letters: ['C', 'A', 'T', 'D', 'O', 'G', 'R', 'U', 'N', 'S'],
-    validWords: [
-      'act', 'ado', 'ago', 'ant', 'arc', 'art', 'can', 'car', 'cat', 'cog',
-      'con', 'cot', 'cud', 'cur', 'cut', 'dag', 'dot', 'dug', 'duo', 'dun',
-      'god', 'gnu', 'got', 'gun', 'gut', 'nag', 'nor', 'nut', 'oar', 'oat',
-      'our', 'out', 'rag', 'ran', 'rat', 'rod', 'rot', 'rug', 'run', 'rut',
-      'sag', 'sat', 'son', 'sot', 'sun', 'tag', 'tar', 'tat', 'ton', 'too',
-      'tog', 'tug',
-    ],
-    difficulty: 1,
-  },
-  {
-    description: "Words starting with 'S'",
-    category: 'starting',
-    letters: ['S', 'T', 'A', 'R', 'I', 'N', 'G', 'O', 'D', 'E'],
-    validWords: [
-      'sad', 'sag', 'sand', 'sane', 'sang', 'sari', 'sat', 'sea', 'set', 'side',
-      'sing', 'sire', 'sit', 'soda', 'son', 'song', 'sore', 'sort', 'sot', 'stage',
-      'stair', 'stain', 'star', 'stare', 'sting', 'stir', 'stone', 'store', 'stride',
-    ],
-    difficulty: 2,
-  },
-  {
-    description: "Words ending in 'AT'",
-    category: 'ending',
-    letters: ['C', 'A', 'T', 'B', 'H', 'M', 'R', 'S', 'F', 'L'],
-    validWords: ['cat', 'bat', 'hat', 'mat', 'rat', 'sat', 'fat', 'flat', 'brat', 'that'],
-    difficulty: 3,
-  },
-  {
-    description: "Words containing 'OO'",
-    category: 'containing',
-    letters: ['G', 'O', 'O', 'D', 'L', 'K', 'B', 'T', 'F', 'W'],
-    validWords: [
-      'good', 'look', 'book', 'took', 'wood', 'foot', 'boot', 'tool',
-      'loot', 'food', 'wolf',
-    ],
-    difficulty: 4,
-  },
-  {
-    description: "Words ending in 'OG'",
-    category: 'ending',
-    letters: ['D', 'O', 'G', 'F', 'R', 'C', 'B', 'L', 'T', 'J'],
-    validWords: ['dog', 'fog', 'log', 'bog', 'cog', 'jog', 'frog', 'clog', 'flog'],
-    difficulty: 3,
-  },
-  {
-    description: 'Words with double letters',
-    category: 'containing',
-    letters: ['S', 'E', 'E', 'T', 'L', 'B', 'O', 'K', 'F', 'L'],
-    validWords: [
-      'see', 'bee', 'feel', 'feet', 'left', 'belt', 'fell', 'felt', 'best',
-      'flee', 'flock', 'steep', 'fleet', 'beef', 'beet', 'keep', 'keel',
-    ],
-    difficulty: 3,
-  },
-  {
-    description: "Words ending in 'IN'",
-    category: 'ending',
-    letters: ['B', 'D', 'T', 'S', 'P', 'K', 'I', 'N', 'H', 'R'],
-    validWords: ['bin', 'din', 'kin', 'pin', 'sin', 'tin', 'shin', 'skin', 'spin', 'thin'],
-    difficulty: 3,
-  },
-  {
-    description: "Words ending in 'UB'",
-    category: 'ending',
-    letters: ['U', 'B', 'R', 'T', 'S', 'L', 'G', 'N', 'H', 'D'],
-    validWords: ['rub', 'tub', 'sub', 'hub', 'shrub', 'stub', 'grub', 'snub', 'dub', 'drub'],
-    difficulty: 4,
-  },
-  {
-    description: "Words starting with 'ST'",
-    category: 'starting',
-    letters: ['S', 'T', 'O', 'P', 'A', 'R', 'I', 'N', 'G', 'D'],
-    validWords: [
-      'star', 'stir', 'stop', 'stag', 'sting', 'stair', 'stand',
-      'strand', 'strap', 'string', 'strong', 'staid', 'stain',
-      'staring', 'storing',
-    ],
-    difficulty: 3,
-  },
-  {
-    description: "Words ending in 'OP'",
-    category: 'ending',
-    letters: ['H', 'O', 'P', 'M', 'T', 'S', 'D', 'L', 'R', 'C'],
-    validWords: ['hop', 'mop', 'top', 'cop', 'chop', 'drop', 'flop', 'shop', 'slop', 'stop'],
-    difficulty: 2,
-  },
-  {
-    description: "Words ending in 'UN'",
-    category: 'ending',
-    letters: ['F', 'U', 'N', 'R', 'S', 'B', 'G', 'P', 'L', 'T'],
-    validWords: ['fun', 'run', 'sun', 'bun', 'gun', 'pun', 'bung', 'sung', 'spun', 'stun', 'grunt', 'stung'],
-    difficulty: 3,
-  },
-  {
-    description: "Words starting with 'BR'",
-    category: 'starting',
-    letters: ['B', 'R', 'A', 'I', 'N', 'G', 'S', 'O', 'K', 'T'],
-    validWords: [
-      'bra', 'brag', 'bran', 'brat', 'brain', 'bring', 'brink', 'brats', 'brisk',
-    ],
-    difficulty: 3,
-  },
-];
+// ─── Rules are generated dynamically from the dictionary ──────────────────
+// See /src/lib/wordRuleGenerator.ts and /src/lib/dictionary.ts
 
 const TOTAL_ROUNDS = 4;
 const ROUND_TIME = 45;
 const GLOBAL_TIME = 180;
 const TILE_SIZE = 48;
+
+// ─── Pick rules dynamically from dictionary ────────────────────────────────
+function pickRules(): Rule[] {
+  return generateRules(TOTAL_ROUNDS);
+}
 
 // ─── Shuffle helper ───────────────────────────────────────────────────────────
 function shuffleArray<T>(array: T[]): T[] {
@@ -162,36 +59,6 @@ function shuffleArray<T>(array: T[]): T[] {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
-}
-
-// ─── Pick 4 rules with category variety ───────────────────────────────────
-// Ensures at least 2 different categories per session for variety.
-function pickRules(): Rule[] {
-  const shuffled = shuffleArray([...ALL_RULES]);
-  // Try to pick from different categories first
-  const byCategory = new Map<string, Rule[]>();
-  for (const rule of shuffled) {
-    const cat = rule.category;
-    if (!byCategory.has(cat)) byCategory.set(cat, []);
-    byCategory.get(cat)!.push(rule);
-  }
-  // Take one from each category (up to 4), then fill remaining randomly
-  const picked: Rule[] = [];
- const usedCategories = new Set<string>();
- for (const rule of shuffled) {
-    if (picked.length >= TOTAL_ROUNDS) break;
-    if (usedCategories.has(rule.category)) continue;
-    picked.push(rule);
-    usedCategories.add(rule.category);
-  }
-  // Fill remaining slots from the rest
-  for (const rule of shuffled) {
-    if (picked.length >= TOTAL_ROUNDS) break;
-    if (picked.includes(rule)) continue;
-    picked.push(rule);
-  }
-  picked.sort((a, b) => (a.difficulty ?? 5) - (b.difficulty ?? 5));
-  return picked;
 }
 
 // ─── Initial State Factory ───────────────────────────────────────────────────
@@ -230,10 +97,7 @@ export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
   const [rules] = useState<Rule[]>(() => {
     if (isDaily) {
       const seed = dateToSeed(getTodaySeedStr());
-      const rng = createSeededRandom(seed);
-      const picked = seededShuffle(ALL_RULES, rng).slice(0, TOTAL_ROUNDS);
-      picked.sort((a, b) => (a.difficulty ?? 5) - (b.difficulty ?? 5));
-      return picked;
+      return generateRules(TOTAL_ROUNDS, seed);
     }
     return pickRules();
   });
