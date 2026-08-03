@@ -34,13 +34,15 @@ interface PuzzleState {
   wordKey: number;
   typewriterText: string;
   wordsPerRound: number[]; // track words found in each round
+  allFoundBonus: number; // time bonus seconds awarded for finding all words
 }
 
-// ─── Rules (ordered easy → hard, pick 4 for 4 rounds) ─────────────────────
+// ─── Rules (pick 4 for 4 rounds) ────────────────────────────────────────
+// Categories: 'ending', 'starting', 'containing', 'length'
 const ALL_RULES: Rule[] = [
   {
     description: '3-letter words',
-    category: 'pattern',
+    category: 'length',
     letters: ['C', 'A', 'T', 'D', 'O', 'G', 'R', 'U', 'N', 'S'],
     validWords: [
       'act', 'ado', 'ago', 'ant', 'arc', 'art', 'can', 'car', 'cat', 'cog',
@@ -54,26 +56,25 @@ const ALL_RULES: Rule[] = [
   },
   {
     description: "Words starting with 'S'",
-    category: 'pattern',
+    category: 'starting',
     letters: ['S', 'T', 'A', 'R', 'I', 'N', 'G', 'O', 'D', 'E'],
     validWords: [
       'sad', 'sag', 'sand', 'sane', 'sang', 'sari', 'sat', 'sea', 'set', 'side',
       'sing', 'sire', 'sit', 'soda', 'son', 'song', 'sore', 'sort', 'sot', 'stage',
-      'stair', 'stain', 'star', 'stare', 'sting', 'stir', 'stone', 'stond', 'stong',
-      'store', 'stride',
+      'stair', 'stain', 'star', 'stare', 'sting', 'stir', 'stone', 'store', 'stride',
     ],
     difficulty: 2,
   },
   {
     description: "Words ending in 'AT'",
-    category: 'pattern',
+    category: 'ending',
     letters: ['C', 'A', 'T', 'B', 'H', 'M', 'R', 'S', 'F', 'L'],
     validWords: ['cat', 'bat', 'hat', 'mat', 'rat', 'sat', 'fat', 'flat', 'brat', 'that'],
     difficulty: 3,
   },
   {
     description: "Words containing 'OO'",
-    category: 'pattern',
+    category: 'containing',
     letters: ['G', 'O', 'O', 'D', 'L', 'K', 'B', 'T', 'F', 'W'],
     validWords: [
       'good', 'look', 'book', 'took', 'wood', 'foot', 'boot', 'tool',
@@ -83,18 +84,66 @@ const ALL_RULES: Rule[] = [
   },
   {
     description: "Words ending in 'OG'",
-    category: 'pattern',
+    category: 'ending',
     letters: ['D', 'O', 'G', 'F', 'R', 'C', 'B', 'L', 'T', 'J'],
     validWords: ['dog', 'fog', 'log', 'bog', 'cog', 'jog', 'frog', 'clog', 'flog'],
     difficulty: 3,
   },
   {
     description: 'Words with double letters',
-    category: 'pattern',
+    category: 'containing',
     letters: ['S', 'E', 'E', 'T', 'L', 'B', 'O', 'K', 'F', 'L'],
     validWords: [
       'see', 'bee', 'feel', 'feet', 'left', 'belt', 'fell', 'felt', 'best',
       'flee', 'flock', 'steep', 'fleet', 'beef', 'beet', 'keep', 'keel',
+    ],
+    difficulty: 3,
+  },
+  {
+    description: "Words ending in 'IN'",
+    category: 'ending',
+    letters: ['B', 'D', 'T', 'S', 'P', 'K', 'I', 'N', 'H', 'R'],
+    validWords: ['bin', 'din', 'kin', 'pin', 'sin', 'tin', 'shin', 'skin', 'spin', 'thin'],
+    difficulty: 3,
+  },
+  {
+    description: "Words ending in 'UB'",
+    category: 'ending',
+    letters: ['U', 'B', 'R', 'T', 'S', 'L', 'G', 'N', 'H', 'D'],
+    validWords: ['rub', 'tub', 'sub', 'hub', 'shrub', 'stub', 'grub', 'snub', 'dub', 'drub'],
+    difficulty: 4,
+  },
+  {
+    description: "Words starting with 'ST'",
+    category: 'starting',
+    letters: ['S', 'T', 'O', 'P', 'A', 'R', 'I', 'N', 'G', 'D'],
+    validWords: [
+      'star', 'stir', 'stop', 'stag', 'sting', 'stair', 'stand',
+      'strand', 'strap', 'string', 'strong', 'staid', 'stain',
+      'staring', 'storing',
+    ],
+    difficulty: 3,
+  },
+  {
+    description: "Words ending in 'OP'",
+    category: 'ending',
+    letters: ['H', 'O', 'P', 'M', 'T', 'S', 'D', 'L', 'R', 'C'],
+    validWords: ['hop', 'mop', 'top', 'cop', 'chop', 'drop', 'flop', 'shop', 'slop', 'stop'],
+    difficulty: 2,
+  },
+  {
+    description: "Words ending in 'UN'",
+    category: 'ending',
+    letters: ['F', 'U', 'N', 'R', 'S', 'B', 'G', 'P', 'L', 'T'],
+    validWords: ['fun', 'run', 'sun', 'bun', 'gun', 'pun', 'bung', 'sung', 'spun', 'stun', 'grunt', 'stung'],
+    difficulty: 3,
+  },
+  {
+    description: "Words starting with 'BR'",
+    category: 'starting',
+    letters: ['B', 'R', 'A', 'I', 'N', 'G', 'S', 'O', 'K', 'T'],
+    validWords: [
+      'bra', 'brag', 'bran', 'brat', 'brain', 'bring', 'brink', 'brats', 'brisk',
     ],
     difficulty: 3,
   },
@@ -115,11 +164,34 @@ function shuffleArray<T>(array: T[]): T[] {
   return arr;
 }
 
-// ─── Pick 4 random rules (shuffled, sorted by difficulty) ──────────────────
+// ─── Pick 4 rules with category variety ───────────────────────────────────
+// Ensures at least 2 different categories per session for variety.
 function pickRules(): Rule[] {
   const shuffled = shuffleArray([...ALL_RULES]);
-  shuffled.sort((a, b) => (a.difficulty ?? 5) - (b.difficulty ?? 5));
-  return shuffled.slice(0, TOTAL_ROUNDS);
+  // Try to pick from different categories first
+  const byCategory = new Map<string, Rule[]>();
+  for (const rule of shuffled) {
+    const cat = rule.category;
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    byCategory.get(cat)!.push(rule);
+  }
+  // Take one from each category (up to 4), then fill remaining randomly
+  const picked: Rule[] = [];
+ const usedCategories = new Set<string>();
+ for (const rule of shuffled) {
+    if (picked.length >= TOTAL_ROUNDS) break;
+    if (usedCategories.has(rule.category)) continue;
+    picked.push(rule);
+    usedCategories.add(rule.category);
+  }
+  // Fill remaining slots from the rest
+  for (const rule of shuffled) {
+    if (picked.length >= TOTAL_ROUNDS) break;
+    if (picked.includes(rule)) continue;
+    picked.push(rule);
+  }
+  picked.sort((a, b) => (a.difficulty ?? 5) - (b.difficulty ?? 5));
+  return picked;
 }
 
 // ─── Initial State Factory ───────────────────────────────────────────────────
@@ -145,6 +217,7 @@ function createInitialState(): PuzzleState {
     wordKey: 0,
     typewriterText: '',
     wordsPerRound: [],
+    allFoundBonus: 0,
   };
 }
 
@@ -362,6 +435,7 @@ export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
         feedbackWord: '',
         phase: 'transition',
         wordsPerRound: updatedWordsPerRound,
+        allFoundBonus: 0,
       });
       // Auto-advance after 3 seconds
       setTimeout(() => {
@@ -460,26 +534,74 @@ export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
       const newTotalCorrect = s.totalCorrect + 1;
       const newTotalWordsFound = s.totalWordsFound + 1;
 
+      const newFoundWords = [...s.foundWords, word];
+      const allFound = rule.validWords.length <= 10 && newFoundWords.length === rule.validWords.length;
+
       setState({
-        foundWords: [...s.foundWords, word],
+        foundWords: newFoundWords,
         combo: newCombo,
         score: s.score + points,
         bestCombo: newBestCombo,
         totalCorrect: newTotalCorrect,
         totalAttempts: newTotalAttempts,
         totalWordsFound: newTotalWordsFound,
-        feedback: 'correct',
+        feedback: allFound ? 'correct' : 'correct',
         feedbackWord: word,
-        scorePop: `+${points}`,
+        scorePop: allFound ? `+${points} All found!` : `+${points}`,
         scorePopKey: s.scorePopKey + 1,
         selectedIndices: [],
         wordKey: s.wordKey + 1,
       });
 
-      setTimeout(() => {
-        if (gameEndedRef.current) return;
-        setState({ feedback: null, feedbackWord: '', scorePop: null });
-      }, 1200);
+      // Auto-advance to transition when all words found (small sets)
+      if (allFound) {
+        const bonusTime = s.roundTime; // award remaining round time as bonus
+        setTimeout(() => {
+          if (gameEndedRef.current) return;
+          const cur = stateRef.current;
+          if (cur.phase !== 'playing') return;
+          const updatedWordsPerRound = [...cur.wordsPerRound, cur.foundWords.length];
+          setState({
+            roundTime: 0,
+            globalTime: Math.min(cur.globalTime + bonusTime, GLOBAL_TIME),
+            selectedIndices: [],
+            feedback: null,
+            feedbackWord: '',
+            phase: 'transition',
+            wordsPerRound: updatedWordsPerRound,
+            allFoundBonus: bonusTime,
+          });
+          setTimeout(() => {
+            if (gameEndedRef.current) return;
+            const current = stateRef.current;
+            if (current.phase !== 'transition') return;
+            const nextRound = current.currentRound + 1;
+            if (nextRound >= TOTAL_ROUNDS) {
+              endGame();
+            } else {
+              setState({
+                phase: 'playing',
+                currentRound: nextRound,
+                roundTime: ROUND_TIME,
+                selectedIndices: [],
+                foundWords: [],
+                combo: 0,
+                typewriterText: '',
+                feedback: null,
+                feedbackWord: '',
+                allFoundBonus: 0,
+              });
+              const nextRule = rulesRef.current[nextRound];
+              startTypewriter(nextRule.description);
+            }
+          }, 2000);
+        }, 800);
+      } else {
+        setTimeout(() => {
+          if (gameEndedRef.current) return;
+          setState({ feedback: null, feedbackWord: '', scorePop: null });
+        }, 1200);
+      }
     } else {
       // Wrong
       setState({
@@ -592,7 +714,8 @@ export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
   // ── Ring container size ──
   const ringContainerSize = (ringRadius + TILE_SIZE / 2) * 2;
 
-  // ── Render ──
+  // ── Computed: should show word counter (small sets only) ──
+  const showWordCounter = state.phase === 'playing' && currentRule.validWords.length <= 10;
   return (
     <div
       className="flex flex-col items-center min-h-screen"
@@ -720,8 +843,8 @@ export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
         />
       </div>
 
-      {/* ── Word Counter ── */}
-      {state.phase === 'playing' && (
+      {/* Word Counter - small sets only */}
+      {showWordCounter && (
         <div className="flex items-center gap-2 mb-3">
           <span className="text-xs font-semibold" style={{ color: '#333' }}>
             {state.foundWords.length} / {currentRule.validWords.length} words
@@ -1012,15 +1135,21 @@ export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
               className="text-2xl font-black mb-1"
               style={{ color: '#333' }}
             >
-              Round {state.currentRound + 1} Complete!
+              {state.allFoundBonus > 0 ? 'All Found!' : `Round ${state.currentRound + 1} Complete!`}
             </div>
 
             <div
               className="text-base font-bold mb-4"
-              style={{ color: '#58CC02' }}
+              style={{ color: state.allFoundBonus > 0 ? '#FF9600' : '#58CC02' }}
             >
               The rule was: "{transitionRule.description}"
             </div>
+
+            {state.allFoundBonus > 0 && (
+              <div className="text-sm font-bold mb-3" style={{ color: '#58CC02' }}>
+                +{state.allFoundBonus}s time bonus!
+              </div>
+            )}
 
             <div className="flex justify-center gap-6 mb-4">
               <div className="text-center">
