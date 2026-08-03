@@ -720,6 +720,27 @@ export default function WordPuzzle({ isDaily = false }: WordPuzzleProps) {
         />
       </div>
 
+      {/* ── Word Counter ── */}
+      {state.phase === 'playing' && (
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs font-semibold" style={{ color: '#333' }}>
+            {state.foundWords.length} / {currentRule.validWords.length} words
+          </span>
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ width: 80, background: '#E0E0E0' }}>
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{
+                width: `${Math.min(100, (state.foundWords.length / currentRule.validWords.length) * 100)}%`,
+                background: state.foundWords.length / currentRule.validWords.length >= 0.7 ? '#58CC02' : state.foundWords.length / currentRule.validWords.length >= 0.4 ? '#FF9600' : '#999',
+              }}
+            />
+          </div>
+          {state.foundWords.length === currentRule.validWords.length && (
+            <span className="text-xs font-black" style={{ color: '#58CC02' }}>All found!</span>
+          )}
+        </div>
+      )}
+
       {/* ── Found Words Pills ── */}
       {state.foundWords.length > 0 && (
         <div
