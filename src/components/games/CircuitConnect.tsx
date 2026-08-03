@@ -36,7 +36,6 @@ interface ActivePuzzle {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const GAP = 3;
-const SOLVED_DELAY = 1500;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const isAdjacent = (a: [number, number], b: [number, number]): boolean => {
@@ -55,9 +54,12 @@ const formatTime = (s: number) => {
 export default function CircuitConnect({ isDaily = false }: CircuitConnectProps) {
   const { circuitLevel } = useGameStore();
   const [puzzleKey, setPuzzleKey] = useState(0);
-  const [levelAtPlay, setLevelAtPlay] = useState(circuitLevel);
+  const [leveledUp, setLeveledUp] = useState(false);
+  const [leveledDown, setLeveledDown] = useState(false);
 
   // ─── Generate or select puzzle ──────────────────────────────────────────
+  // Intentionally reads circuitLevel non-reactively via getState() so the puzzle
+  // only regenerates when puzzleKey changes, NOT when the store level updates mid-overlay.
   const puzzle: ActivePuzzle = useMemo(() => {
     if (isDaily) {
       const dayNum = getDayNumber();
@@ -66,15 +68,14 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
       const fallback = CIRCUIT_PUZZLES[dayNum % CIRCUIT_PUZZLES.length];
       return { gridSize: fallback.gridSize, level: fallback.difficulty, pairs: fallback.pairs, timeLimit: 180 };
     }
-    // Practice: use current circuit level
-    const lvl = circuitLevel;
-    setLevelAtPlay(lvl);
+    // Practice: use current circuit level from store (non-reactive read)
+    const lvl = useGameStore.getState().circuitLevel;
     const generated = generatePuzzle(lvl);
     if (generated) return generated;
     // Fallback to hand-crafted
     const fallback = CIRCUIT_PUZZLES[Math.floor(Math.random() * CIRCUIT_PUZZLES.length)];
     return { gridSize: fallback.gridSize, level: fallback.difficulty, pairs: fallback.pairs, timeLimit: 180 };
-  }, [isDaily, circuitLevel, puzzleKey]);
+  }, [isDaily, puzzleKey]);
 
   const { gridSize, pairs } = puzzle;
   const MAX_TIME = puzzle.timeLimit;
@@ -111,11 +112,13 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
   stateRef.current = state;
   const solvedRef = useRef(false);
 
-  // Reset on puzzle change
+  // Reset on puzzle change (not on circuitLevel — that changes mid-overlay)
   useEffect(() => {
     setState({ phase: 'playing', paths: {}, currentPath: [], activeColor: null, timeElapsed: 0, moveCount: 0 });
     solvedRef.current = false;
-  }, [puzzleKey, isDaily, circuitLevel]);
+    setLeveledUp(false);
+    setLeveledDown(false);
+  }, [puzzleKey, isDaily]);
 
   // ─── Grid dimensions ────────────────────────────────────────────────────
   const [gridWidth, setGridWidth] = useState(0);
@@ -169,53 +172,54 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
     else if (state.timeElapsed < MAX_TIME * 0.66) stars = 2;
     else stars = 1;
 
-    const timerRef2 = setTimeout(() => {
-      // Auto-progress for practice mode
-      if (!isDaily) {
-        useGameStore.getState().advanceCircuitLevel(stars);
-      }
-      // For daily: route to score screen as usual.
-      // For practice: stay in-game so player can hit "Next Puzzle".
-      if (isDaily) {
-        useGameStore.getState().completeSession({
-          game: 'circuit' as SessionResults['game'],
-          score: totalScore, stars, accuracy: 100, bestCombo: 0,
-          timeElapsed: state.timeElapsed, isDaily: true,
-          extra: `Lv${puzzle.level} ${gridSize}\u00d7${gridSize}`,
-          circuitLevel: puzzle.level,
-        });
-      } else {
-        // Still record XP/streak without navigating away
-        const today = new Date().toISOString().split('T')[0];
-        const curState = useGameStore.getState();
-        const xpGained = Math.round(totalScore * 0.5) + stars * 20;
-        const newXP = curState.xp + xpGained;
-        const newLvl = Math.floor(newXP / 100) + 1;
-        let newStreak = curState.streak;
-        if (!curState.lastPlayDate) { newStreak = 1; } else {
-          const diff = Math.floor((new Date(today).getTime() - new Date(curState.lastPlayDate).getTime()) / 86400000);
-          if (diff === 1) newStreak = curState.streak + 1;
-          else if (diff > 1) newStreak = 1;
-        }
-        const newGames = [...curState.gamesCompleted];
-        if (!newGames.includes('circuit')) newGames.push('circuit');
-        useGameStore.setState({
-          xp: newXP, level: newLvl, streak: newStreak,
-          totalGamesPlayed: curState.totalGamesPlayed + 1,
-          dailyProgress: newGames.length, gamesCompleted: newGames,
-          lastPlayDate: today,
-        });
-      }
-    }, SOLVED_DELAY);
+    // Advance level IMMEDIATELY so it's ready when user taps "Next Puzzle"
+    if (!isDaily) {
+      const prevLevel = useGameStore.getState().circuitLevel;
+      const newLevel = useGameStore.getState().advanceCircuitLevel(stars);
+      if (newLevel > prevLevel) setLeveledUp(true);
+      else if (newLevel < prevLevel) setLeveledDown(true);
+    }
 
-    return () => clearTimeout(timerRef2);
+    // Record XP/streak (no navigation for practice mode)
+    if (isDaily) {
+      useGameStore.getState().completeSession({
+        game: 'circuit' as SessionResults['game'],
+        score: totalScore, stars, accuracy: 100, bestCombo: 0,
+        timeElapsed: state.timeElapsed, isDaily: true,
+        extra: `Lv${puzzle.level} ${gridSize}\u00d7${gridSize}`,
+        circuitLevel: puzzle.level,
+      });
+    } else {
+      const today = new Date().toISOString().split('T')[0];
+      const curState = useGameStore.getState();
+      const xpGained = Math.round(totalScore * 0.5) + stars * 20;
+      const newXP = curState.xp + xpGained;
+      const newLvl = Math.floor(newXP / 100) + 1;
+      let newStreak = curState.streak;
+      if (!curState.lastPlayDate) { newStreak = 1; } else {
+        const diff = Math.floor((new Date(today).getTime() - new Date(curState.lastPlayDate).getTime()) / 86400000);
+        if (diff === 1) newStreak = curState.streak + 1;
+        else if (diff > 1) newStreak = 1;
+      }
+      const newGames = [...curState.gamesCompleted];
+      if (!newGames.includes('circuit')) newGames.push('circuit');
+      useGameStore.setState({
+        xp: newXP, level: newLvl, streak: newStreak,
+        totalGamesPlayed: curState.totalGamesPlayed + 1,
+        dailyProgress: newGames.length, gamesCompleted: newGames,
+        lastPlayDate: today,
+      });
+    }
   }, [state.paths, state.phase, state.timeElapsed, pairs, gridSize, MAX_TIME, puzzle.level, isDaily]);
 
   // ─── Time-up also triggers progression ─────────────────────────────────
   useEffect(() => {
     if (state.phase !== 'timeUp') return;
     if (!isDaily) {
-      useGameStore.getState().advanceCircuitLevel(0);
+      const prevLevel = useGameStore.getState().circuitLevel;
+      const newLevel = useGameStore.getState().advanceCircuitLevel(0);
+      if (newLevel < prevLevel) setLeveledDown(true);
+      else if (newLevel > prevLevel) setLeveledUp(true);
     }
   }, [state.phase, isDaily]);
 
@@ -544,9 +548,21 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
             <div className="text-2xl font-black mb-1" style={{ color: '#333' }}>Puzzle Solved!</div>
             <div className="text-lg font-bold mb-1" style={{ color: '#58CC02' }}>Score: {totalScore}</div>
             {!isDaily && (
-              <div className="text-xs font-semibold mb-2" style={{ color: levelConfig.tierColor }}>
-                Level {circuitLevel} {'\u2014'} {levelConfig.tier}
-              </div>
+              <>
+                <div className="text-xs font-semibold mb-1" style={{ color: levelConfig.tierColor }}>
+                  Level {puzzle.level} {'\u2014'} {levelConfig.tier}
+                </div>
+                {leveledUp && (
+                  <div className="text-sm font-black mb-2" style={{ color: '#FF9600' }}>
+                    {'\u2b06'} Level Up! Next: Level {circuitLevel}
+                  </div>
+                )}
+                {!leveledUp && (
+                  <div className="text-[10px] mb-2" style={{ color: '#BBB' }}>
+                    {solvedStars === 3 ? '1 more 3-star to level up!' : 'Get 3 stars to level up'}
+                  </div>
+                )}
+              </>
             )}
             <div className="text-sm mb-3" style={{ color: '#999' }}>Time: {formatTime(state.timeElapsed)}</div>
             <div className="flex justify-center gap-2 mb-4">
@@ -562,7 +578,7 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
                   className="w-full py-3 rounded-xl text-base font-bold mb-2"
                   style={{ background: 'linear-gradient(135deg, #58CC02, #58A700)', color: '#fff', border: 'none', borderBottom: '4px solid #46A302', cursor: 'pointer' }}
                 >
-                  Next Puzzle
+                  Next Puzzle {leveledUp ? `(Lv ${circuitLevel})` : ''}
                 </button>
                 <button
                   onClick={() => useGameStore.getState().setScreen('home')}
@@ -592,9 +608,21 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
             <div className="text-2xl font-black mb-3" style={{ color: '#333' }}>Time&apos;s Up!</div>
             <div className="text-base font-bold mb-1" style={{ color: '#FF3B30' }}>{connectedCount} of {pairs.length} pairs connected</div>
             {!isDaily && (
-              <div className="text-xs font-semibold mb-3" style={{ color: levelConfig.tierColor }}>
-                Level {circuitLevel} {'\u2014'} {levelConfig.tier}
-              </div>
+              <>
+                <div className="text-xs font-semibold mb-1" style={{ color: levelConfig.tierColor }}>
+                  Level {puzzle.level} {'\u2014'} {levelConfig.tier}
+                </div>
+                {leveledDown && (
+                  <div className="text-sm font-black mb-3" style={{ color: '#FF3B30' }}>
+                    {'\u2b07'} Level Down \u2192 Level {circuitLevel}
+                  </div>
+                )}
+                {!leveledDown && (
+                  <div className="text-[10px] mb-3" style={{ color: '#BBB' }}>
+                    Finish faster to avoid leveling down
+                  </div>
+                )}
+              </>
             )}
             {!isDaily ? (
               <>
@@ -603,7 +631,7 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
                   className="w-full py-3 rounded-xl text-base font-bold mb-2"
                   style={{ background: 'linear-gradient(135deg, #FF9600, #FF7A00)', color: '#fff', border: 'none', borderBottom: '4px solid #CC7A00', cursor: 'pointer' }}
                 >
-                  Try Again
+                  Try Again {leveledDown ? `(Lv ${circuitLevel})` : ''}
                 </button>
                 <button
                   onClick={() => useGameStore.getState().setScreen('home')}

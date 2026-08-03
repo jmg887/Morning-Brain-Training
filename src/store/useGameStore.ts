@@ -148,28 +148,28 @@ export const useGameStore = create<GameState>()(
         return get().dailyWordCompleted === getTodayStr();
       },
 
-      // ── Circuit Connect auto-progression ──
       // Track last 5 results. If 2+ of last 3 were 3-star → level up.
       // If 2+ of last 3 were 0-star (timeout) → level down.
       advanceCircuitLevel: (stars: number) => {
         const state = get();
-        const history = [...state.circuitHistory, { stars, level: state.circuitLevel }].slice(-5);
-        let newLevel = state.circuitLevel;
+        const prevLevel = state.circuitLevel;
+        const history = [...state.circuitHistory, { stars, level: prevLevel }].slice(-5);
+        let newLevel = prevLevel;
 
         // Look at last 3 entries
         const recent = history.slice(-3);
         if (recent.length >= 2) {
           const threeStarCount = recent.filter(h => h.stars === 3).length;
           const zeroStarCount = recent.filter(h => h.stars === 0).length;
-          if (threeStarCount >= 2 && recent.length >= 3) {
-            newLevel = Math.min(state.circuitLevel + 1, 20);
+          if (threeStarCount >= 2) {
+            newLevel = Math.min(prevLevel + 1, 20);
           } else if (zeroStarCount >= 2) {
-            newLevel = Math.max(state.circuitLevel - 1, 1);
+            newLevel = Math.max(prevLevel - 1, 1);
           }
         }
 
         set({ circuitLevel: newLevel, circuitHistory: history });
-        return newLevel;
+        return newLevel; // return the new level (caller can compare with prev to detect change)
       },
     }),
     {
