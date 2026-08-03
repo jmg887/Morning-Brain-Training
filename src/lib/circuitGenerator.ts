@@ -1,11 +1,11 @@
 // ─── Circuit Connect Puzzle Generator ─────────────────────────────────
 //
 // Strategy: Generate a Hamiltonian path (visits every cell exactly once)
-// via randomized DFS, then cut it into N segments.
-// Each segment becomes a color pair. This guarantees:
-//   - Every cell is fillable (perfect puzzle)
-//   - No crossings (segments of a single path)
-//   - Always solvable (the path IS the solution)
+// via randomized DFS with Warnsdorff's heuristic, then cut it into N
+// segments. Each segment becomes a color pair.
+//
+// Level system: 20 fine-grained levels that smoothly scale grid size,
+// pair count, time pressure, and segment complexity.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -22,9 +22,10 @@ export interface GeneratedPair {
 
 export interface GeneratedPuzzle {
   gridSize: number;
-  difficulty: number;
+  level: number;
   pairs: GeneratedPair[];
   solutionPaths: Record<string, [number, number][]>;
+  timeLimit: number;
 }
 
 // ─── Color palette (up to 8 distinct colors) ──────────────────────────────────
@@ -40,25 +41,67 @@ const COLORS: { color: string; colorHex: string }[] = [
   { color: 'gold', colorHex: '#FFD60A' },
 ];
 
-// ─── Difficulty configs ──────────────────────────────────────────────────────
+// ─── Level Config ─────────────────────────────────────────────────────────────
+//
+// 20 levels that smoothly ramp:
+//   - Grid:     5 → 5 → 5 → 6 → 6 → 6 → 6 → 7 → 7 → 7 → 7 → 7 → 8 → 8 → 8 → 8
+//   - Pairs:    3 → 3 → 4 → 4 → 4 → 5 → 5 → 5 → 6 → 6 → 7 → 7 → 7 → 8 → 8 → 8
+//   - Time:     generous → tight
+//   - MinSeg:   longer (easier) → shorter (harder, more uniform segments)
+//
 
-export interface DifficultyConfig {
+export interface LevelConfig {
   gridSize: number;
   numPairs: number;
-  label: string;
+  timeLimit: number;
+  minSegmentLen: number;
+  tier: string;       // display tier name
+  tierColor: string;  // color for the tier badge
 }
 
-export const DIFFICULTY_CONFIGS: Record<number, DifficultyConfig> = {
-  1: { gridSize: 5, numPairs: 3, label: 'Easy' },
-  2: { gridSize: 6, numPairs: 5, label: 'Medium' },
-  3: { gridSize: 7, numPairs: 7, label: 'Hard' },
-};
+const LEVEL_CONFIGS: LevelConfig[] = [
+  // ── Tier 1: Beginner (5x5, gentle) ──
+  { gridSize: 5, numPairs: 3, timeLimit: 120, minSegmentLen: 4, tier: 'Beginner',     tierColor: '#58CC02' },  // 1
+  { gridSize: 5, numPairs: 3, timeLimit: 100, minSegmentLen: 3, tier: 'Beginner',     tierColor: '#58CC02' },  // 2
+  { gridSize: 5, numPairs: 4, timeLimit: 100, minSegmentLen: 3, tier: 'Beginner',     tierColor: '#58CC02' },  // 3
+  // ── Tier 2: Intermediate (5-6x5-6, growing complexity) ──
+  { gridSize: 5, numPairs: 4, timeLimit: 90,  minSegmentLen: 2, tier: 'Intermediate', tierColor: '#1CB0F6' },  // 4
+  { gridSize: 6, numPairs: 4, timeLimit: 120, minSegmentLen: 3, tier: 'Intermediate', tierColor: '#1CB0F6' },  // 5
+  { gridSize: 6, numPairs: 5, timeLimit: 120, minSegmentLen: 3, tier: 'Intermediate', tierColor: '#1CB0F6' },  // 6
+  { gridSize: 6, numPairs: 5, timeLimit: 100, minSegmentLen: 2, tier: 'Intermediate', tierColor: '#1CB0F6' },  // 7
+  // ── Tier 3: Advanced (6-7x6-7, more pairs, tighter time) ──
+  { gridSize: 6, numPairs: 5, timeLimit: 90,  minSegmentLen: 2, tier: 'Advanced',     tierColor: '#AF52DE' },  // 8
+  { gridSize: 7, numPairs: 5, timeLimit: 140, minSegmentLen: 3, tier: 'Advanced',     tierColor: '#AF52DE' },  // 9
+  { gridSize: 7, numPairs: 6, timeLimit: 130, minSegmentLen: 2, tier: 'Advanced',     tierColor: '#AF52DE' },  // 10
+  { gridSize: 7, numPairs: 6, timeLimit: 120, minSegmentLen: 2, tier: 'Advanced',     tierColor: '#AF52DE' },  // 11
+  { gridSize: 7, numPairs: 7, timeLimit: 120, minSegmentLen: 2, tier: 'Advanced',     tierColor: '#AF52DE' },  // 12
+  // ── Tier 4: Expert (7-8x7-8, maximum complexity) ──
+  { gridSize: 7, numPairs: 7, timeLimit: 100, minSegmentLen: 2, tier: 'Expert',       tierColor: '#FF3B30' },  // 13
+  { gridSize: 8, numPairs: 7, timeLimit: 150, minSegmentLen: 2, tier: 'Expert',       tierColor: '#FF3B30' },  // 14
+  { gridSize: 8, numPairs: 8, timeLimit: 140, minSegmentLen: 2, tier: 'Expert',       tierColor: '#FF3B30' },  // 15
+  { gridSize: 8, numPairs: 8, timeLimit: 120, minSegmentLen: 2, tier: 'Expert',       tierColor: '#FF3B30' },  // 16
+  // ── Tier 5: Master (8x8, brutal time) ──
+  { gridSize: 8, numPairs: 8, timeLimit: 100, minSegmentLen: 2, tier: 'Master',       tierColor: '#FF2D55' },  // 17
+  { gridSize: 8, numPairs: 8, timeLimit: 90,  minSegmentLen: 2, tier: 'Master',       tierColor: '#FF2D55' },  // 18
+  { gridSize: 8, numPairs: 8, timeLimit: 80,  minSegmentLen: 2, tier: 'Master',       tierColor: '#FF2D55' },  // 19
+  { gridSize: 8, numPairs: 8, timeLimit: 70,  minSegmentLen: 2, tier: 'Master',       tierColor: '#FF2D55' },  // 20
+];
 
-// ─── Hamiltonian Path Generator (randomized DFS) ─────────────────────────────
-//
-// Uses Warnsdorff's heuristic with random tie-breaking:
-// prefer cells with fewer unvisited neighbors to reduce backtracking.
-//
+export const MAX_LEVEL = LEVEL_CONFIGS.length;
+
+/** Get the config for a given level (1-indexed, clamped) */
+export function getLevelConfig(level: number): LevelConfig {
+  return LEVEL_CONFIGS[Math.max(0, Math.min(level - 1, LEVEL_CONFIGS.length - 1))];
+}
+
+/** Map old difficulty numbers to starting levels for migration */
+export function difficultyToLevel(d: number): number {
+  if (d <= 1) return 1;
+  if (d === 2) return 5;
+  return 10;
+}
+
+// ─── Hamiltonian Path Generator (randomized DFS + Warnsdorff) ────────────────
 
 const DIRS: [number, number][] = [[0, 1], [0, -1], [1, 0], [-1, 0]];
 
@@ -72,23 +115,14 @@ function generateHamiltonianPath(
   );
   const path: [number, number][] = [];
 
-  // Start from a random cell
   const startR = Math.floor(rng() * gridSize);
   const startC = Math.floor(rng() * gridSize);
 
-  // Warnsdorff: count unvisited neighbors for a cell
   const countUnvisited = (r: number, c: number): number => {
     let count = 0;
     for (const [dr, dc] of DIRS) {
-      const nr = r + dr,
-        nc = c + dc;
-      if (
-        nr >= 0 &&
-        nr < gridSize &&
-        nc >= 0 &&
-        nc < gridSize &&
-        !visited[nr][nc]
-      ) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < gridSize && nc >= 0 && nc < gridSize && !visited[nr][nc]) {
         count++;
       }
     }
@@ -101,36 +135,26 @@ function generateHamiltonianPath(
 
     if (path.length === total) return true;
 
-    // Collect unvisited neighbors
     const neighbors: [number, number][] = [];
     for (const [dr, dc] of DIRS) {
-      const nr = r + dr,
-        nc = c + dc;
-      if (
-        nr >= 0 &&
-        nr < gridSize &&
-        nc >= 0 &&
-        nc < gridSize &&
-        !visited[nr][nc]
-      ) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < gridSize && nc >= 0 && nc < gridSize && !visited[nr][nc]) {
         neighbors.push([nr, nc]);
       }
     }
 
-    // Warnsdorff: sort by fewest unvisited neighbors (ascending)
-    // with random tie-breaking
+    // Warnsdorff: prefer cells with fewer exits (reduces dead ends)
     neighbors.sort((a, b) => {
       const ca = countUnvisited(a[0], a[1]);
       const cb = countUnvisited(b[0], b[1]);
       if (ca !== cb) return ca - cb;
-      return rng() - 0.5; // random tie-break
+      return rng() - 0.5;
     });
 
     for (const [nr, nc] of neighbors) {
       if (dfs(nr, nc)) return true;
     }
 
-    // Backtrack
     visited[r][c] = false;
     path.pop();
     return false;
@@ -140,10 +164,6 @@ function generateHamiltonianPath(
 }
 
 // ─── Path Segment Cutter ─────────────────────────────────────────────────────
-//
-// Cuts a Hamiltonian path into N segments, each of length >= minLen.
-// Each segment becomes one color pair.
-//
 
 function cutIntoSegments(
   path: [number, number][],
@@ -154,19 +174,12 @@ function cutIntoSegments(
   const n = path.length;
   if (n < numSegments * minLen) return null;
 
-  // Place numSegments-1 dividers. A divider at position d means:
-  //   segment ends at path[d], next segment starts at path[d+1]
-  // Constraints:
-  //   - d[0] >= minLen - 1  (first segment has minLen cells: 0..d[0])
-  //   - d[i] >= d[i-1] + minLen  (each segment has >= minLen cells)
-  //   - d[last] <= n - minLen  (last segment has >= minLen cells)
-
   const dividers: number[] = [];
-  let low = minLen - 1; // minimum position for first divider
+  let low = minLen - 1;
 
   for (let i = 0; i < numSegments - 1; i++) {
     const remaining = numSegments - 1 - i;
-    const high = n - minLen * remaining - 1; // leave room for remaining segments
+    const high = n - minLen * remaining - 1;
     if (low > high) return null;
 
     const d = low + Math.floor(rng() * (high - low + 1));
@@ -174,7 +187,6 @@ function cutIntoSegments(
     low = d + minLen;
   }
 
-  // Build segments from dividers
   const segments: [number, number][][] = [];
   let prev = 0;
   for (const d of dividers) {
@@ -202,44 +214,32 @@ function shuffleArray<T>(arr: T[], rng: () => number): T[] {
 const MAX_ATTEMPTS = 30;
 
 /**
- * Generate a Circuit Connect puzzle.
+ * Generate a Circuit Connect puzzle for a given level.
  *
- * @param difficulty  1 (easy 5x5, 3 pairs), 2 (medium 6x6, 5 pairs), 3 (hard 7x7, 7 pairs)
- * @param seed        Optional seed for deterministic generation (daily mode)
- * @returns Generated puzzle, or null if generation failed after MAX_ATTEMPTS
+ * @param level  1-20 level number
+ * @param seed   Optional seed for deterministic generation (daily mode)
  */
 export function generatePuzzle(
-  difficulty: number = 2,
+  level: number = 1,
   seed?: number
 ): GeneratedPuzzle | null {
-  const config = DIFFICULTY_CONFIGS[difficulty];
-  if (!config) return null;
+  const config = getLevelConfig(level);
 
   const baseRng = seed != null ? createSeededRandom(seed) : Math.random;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    // Each attempt gets a slightly different RNG state
-    // (for seeded mode, advance the seed; for random mode, just retry)
     const rng = seed != null
-      ? createSeededRandom(seed + attempt * 7919) // prime offset for variety
+      ? createSeededRandom(seed + attempt * 7919)
       : baseRng;
 
-    // Step 1: Generate Hamiltonian path
     const path = generateHamiltonianPath(config.gridSize, rng);
     if (!path) continue;
 
-    // Step 2: Cut into segments
-    const segments = cutIntoSegments(path, config.numPairs, rng);
+    const segments = cutIntoSegments(path, config.numPairs, rng, config.minSegmentLen);
     if (!segments) continue;
 
-    // Step 3: Shuffle color assignment so it's not always the same
-    // color on the same segment position
-    const colorOrder = shuffleArray(
-      COLORS.slice(0, config.numPairs),
-      rng
-    );
+    const colorOrder = shuffleArray(COLORS.slice(0, config.numPairs), rng);
 
-    // Step 4: Build pairs and solution paths
     const pairs: GeneratedPair[] = segments.map((seg, i) => ({
       color: colorOrder[i].color,
       colorHex: colorOrder[i].colorHex,
@@ -254,25 +254,26 @@ export function generatePuzzle(
 
     return {
       gridSize: config.gridSize,
-      difficulty,
+      level,
       pairs,
       solutionPaths,
+      timeLimit: config.timeLimit,
     };
   }
 
-  return null; // All attempts failed
+  return null;
 }
 
 /**
  * Generate a daily puzzle using today's seed.
- * Tries multiple difficulty levels until one succeeds.
+ * Scales difficulty based on how far into the month we are.
  */
 export function generateDailyPuzzle(dayNumber: number): GeneratedPuzzle | null {
-  // Try difficulty 2 first, fall back to 1, then 3
-  const order = [2, 1, 3];
-  for (const diff of order) {
-    const puzzle = generatePuzzle(diff, dayNumber * 31 + diff * 7);
-    if (puzzle) return puzzle;
-  }
-  return null;
+  // Daily difficulty cycles: levels 4, 6, 8, 10, 12, 7, 9, 11, 13, 5
+  // then repeats with +3 offset — keeps dailies varied but fair
+  const dailyLevels = [4, 6, 8, 10, 12, 7, 9, 11, 13, 5,
+                       7, 9, 11, 13, 15, 8, 10, 12, 14, 6,
+                       10, 12, 14, 16, 11, 13, 15, 17, 12, 14];
+  const level = dailyLevels[(dayNumber - 1) % dailyLevels.length];
+  return generatePuzzle(level, dayNumber * 31 + level * 7);
 }

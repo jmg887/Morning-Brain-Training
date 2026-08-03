@@ -14,6 +14,7 @@ export interface SessionResults {
   isDaily: boolean;
   extra?: string;
   roundScores?: number[]; // words found per round (for daily share card)
+  circuitLevel?: number; // level at time of play (for progression)
 }
 
 interface GameState {
@@ -29,6 +30,9 @@ interface GameState {
   currentGame: GameType | null;
   sessionResults: SessionResults | null;
   dailyWordCompleted: string | null; // date string e.g. '2026-08-03'
+  circuitLevel: number;
+  circuitHistory: { stars: number; level: number }[];
+  advanceCircuitLevel: (stars: number) => number; // returns new level
   completeSession: (results: SessionResults) => void;
   resetSession: () => void;
   checkAndUpdateStreak: () => void;
@@ -64,6 +68,8 @@ export const useGameStore = create<GameState>()(
       currentGame: null,
       sessionResults: null,
       dailyWordCompleted: null,
+      circuitLevel: 1,
+      circuitHistory: [],
 
       completeSession: (results) => {
         const state = get();
@@ -141,6 +147,30 @@ export const useGameStore = create<GameState>()(
       hasCompletedDailyToday: () => {
         return get().dailyWordCompleted === getTodayStr();
       },
+
+      // ── Circuit Connect auto-progression ──
+      // Track last 5 results. If 2+ of last 3 were 3-star → level up.
+      // If 2+ of last 3 were 0-star (timeout) → level down.
+      advanceCircuitLevel: (stars: number) => {
+        const state = get();
+        const history = [...state.circuitHistory, { stars, level: state.circuitLevel }].slice(-5);
+        let newLevel = state.circuitLevel;
+
+        // Look at last 3 entries
+        const recent = history.slice(-3);
+        if (recent.length >= 2) {
+          const threeStarCount = recent.filter(h => h.stars === 3).length;
+          const zeroStarCount = recent.filter(h => h.stars === 0).length;
+          if (threeStarCount >= 2 && recent.length >= 3) {
+            newLevel = Math.min(state.circuitLevel + 1, 20);
+          } else if (zeroStarCount >= 2) {
+            newLevel = Math.max(state.circuitLevel - 1, 1);
+          }
+        }
+
+        set({ circuitLevel: newLevel, circuitHistory: history });
+        return newLevel;
+      },
     }),
     {
       name: 'braintrain-storage',
@@ -153,6 +183,8 @@ export const useGameStore = create<GameState>()(
         totalGamesPlayed: state.totalGamesPlayed,
         gamesCompleted: state.gamesCompleted,
         dailyWordCompleted: state.dailyWordCompleted,
+        circuitLevel: state.circuitLevel,
+        circuitHistory: state.circuitHistory,
       }),
     }
   )
