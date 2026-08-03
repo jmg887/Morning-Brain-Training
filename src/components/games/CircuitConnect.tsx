@@ -328,8 +328,9 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
 
   // ─── Derived ───────────────────────────────────────────────────────────
   const connectedCount = pairs.filter((p) => state.paths[p.color] && state.paths[p.color].length > 0).length;
-  const timerPct = (state.timeElapsed / MAX_TIME) * 100;
-  const timerColor = state.timeElapsed < MAX_TIME * 0.5 ? '#58CC02' : state.timeElapsed < MAX_TIME * 0.8 ? '#FF9600' : '#FF3B30';
+  const timeRemaining = Math.max(0, MAX_TIME - state.timeElapsed);
+  const timerPct = (timeRemaining / MAX_TIME) * 100;
+  const timerColor = timeRemaining > MAX_TIME * 0.5 ? '#58CC02' : timeRemaining > MAX_TIME * 0.2 ? '#FF9600' : '#FF3B30';
   const solvedStars = state.phase === 'solved'
     ? state.timeElapsed < MAX_TIME * 0.33 ? 3 : state.timeElapsed < MAX_TIME * 0.66 ? 2 : 1
     : 0;
@@ -389,7 +390,7 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
               style={{ width: `${timerPct}%`, background: timerColor }}
             />
           </div>
-          <span className="text-xs font-medium mt-1" style={{ color: '#999' }}>{formatTime(state.timeElapsed)}</span>
+          <span className="text-xs font-bold mt-1 tabular-nums" style={{ color: timerColor, animation: timeRemaining <= 10 && state.phase === 'playing' ? 'cc-pulse 1s ease-in-out infinite' : 'none' }}>{formatTime(timeRemaining)}</span>
         </div>
 
         <div className="flex flex-col items-end">
@@ -658,6 +659,10 @@ export default function CircuitConnect({ isDaily = false }: CircuitConnectProps)
         @keyframes cc-slide-up {
           0% { opacity: 0; transform: translateY(30px); }
           100% { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes cc-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
         }
       `}</style>
     </div>
