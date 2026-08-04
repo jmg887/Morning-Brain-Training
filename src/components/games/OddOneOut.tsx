@@ -2,355 +2,522 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameStore } from '@/store/useGameStore';
-import { generateOddOneRounds } from '@/lib/oddOneGenerator';
-import type { OddOneRound } from '@/lib/oddOneGenerator';
+import { generateOddOneOutRounds, getOddOneOutTotalRounds, PHASES, type OddOneRound, type OddOneItem } from '@/lib/oddOneOutGenerator';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────────
 
-interface GameState {
-  phase: 'playing' | 'feedback' | 'ended';
-  currentRound: number;
-  globalTime: number;
-  score: number;
+interface PhaseTransition {
+  title: string;
+  subtitle: string;
+  isFinal: boolean;
+}
+
+interface LocalState {
+  roundIndex: number;
+  timeRemaining: number;
   combo: number;
+  score: number;
+  correct: number;
+  total: number;
   bestCombo: number;
-  totalCorrect: number;
-  totalAttempts: number;
-  lastCorrect: boolean;
-  tappedIndex: number | null;
-  roundStartTime: number;
-  reactionTimes: number[];
+  selectedItem: number | null;
+  isAnswered: boolean;
+  correctIndex: number;
+  phaseTransition: PhaseTransition | null;
+  gameEnded: boolean;
   scorePop: string | null;
   scorePopKey: number;
+  comboKey: number;
+  roundKey: number;
+  roundStartTime: number;
+  typeLabel: string;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Constants ──────────────────────────────────────────────────────────────────
 
-const TOTAL_ROUNDS = 20;
-const GLOBAL_TIME = 120;
 const FEEDBACK_DURATION = 1200;
+const PHASE_TRANSITION_DURATION = 1800;
+const TYPE_LABELS: Record<string, string> = {
+  category: 'Category',
+  number_pattern: 'Number Pattern',
+  shape: 'Shape Spot',
+  color_shade: 'Color Shade',
+  word_property: 'Word Rule',
+  size_sequence: 'Size Order',
+};
 
-const BASE_SCORE = 200;
-const SPEED_BONUS_MAX = 300;
-const SPEED_BONUS_TIME = 3000; // ms to earn full speed bonus
-
-// ─── Puzzle generation ───────────────────────────────────────────────────────
-
-function pickRounds(): OddOneRound[] {
-  return generateOddOneRounds(TOTAL_ROUNDS);
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const initialState = (): GameState => ({
-  phase: 'playing',
-  currentRound: 0,
-  globalTime: GLOBAL_TIME,
-  score: 0,
-  combo: 0,
-  bestCombo: 0,
-  totalCorrect: 0,
-  totalAttempts: 0,
-  lastCorrect: false,
-  tappedIndex: null,
-  roundStartTime: Date.now(),
-  reactionTimes: [],
-  scorePop: null,
-  scorePopKey: 0,
-});
-
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Component ──────────────────────────────────────────────────────────────────
 
 export default function OddOneOut() {
-  const [state, setState] = useState<GameState>(initialState);
-  const completeSessionCalledRef = useRef(false);
+  const completeSession = useGameStore((s) => s.completeSession);
+  const setScreen = useGameStore((s) => s.setScreen);
+
+  // Generate rounds once, non-reactive
+  const rounds = useMemo(() => generateOddOneOutRounds(), []);
+  const totalRounds = getOddOneOutTotalRounds();
+
+  const [state, setState] = useState<LocalState>({
+    roundIndex: 0,
+    timeRemaining: PHASES[0].timePerRound,
+    combo: 0,
+    score: 0,
+    correct: 0,
+    total: 0,
+    bestCombo: 0,
+    selectedItem: null,
+    isAnswered: false,
+    correctIndex: -1,
+    phaseTransition: null,
+    gameEnded: false,
+    scorePop: null,
+    scorePopKey: 0,
+    comboKey: 0,
+    roundKey: 0,
+    roundStartTime: Date.now(),
+    typeLabel: '',
+  });
+
+  const startTimeRef = useRef(Date.now());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const feedbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const rounds = useMemo(() => pickRounds(), []);
-  const currentRound = rounds[state.currentRound] ?? rounds[0];
+  // Derive current round from stable state
+  const roundIndex = state.roundIndex;
+  const currentRound: OddOneRound | null =
+    !state.gameEnded && !state.phaseTransition && roundIndex < rounds.length
+      ? rounds[roundIndex]
+      : null;
+  const currentPhase = currentRound ? PHASES[currentRound.phase] : null;
 
-  // ── Timer tick ──────────────────────────────────────────────────────────
+  // ─── Timer ────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (state.phase === 'ended') return;
+    if (state.phaseTransition || state.gameEnded || state.isAnswered) return;
+    const phase = PHASES[rounds[roundIndex]?.phase ?? 0];
+    if (!phase) return;
+
     timerRef.current = setInterval(() => {
-      setState(prev => {
-        const newTime = Math.max(0, prev.globalTime - 1);
-        if (newTime === 0) return { ...prev, globalTime: 0, phase: 'ended' };
-        return { ...prev, globalTime: newTime };
-      });
-    }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [state.phase]);
+      setState((prev) => {
+        const round = rounds[prev.roundIndex];
+        if (!round) return prev;
+        const elapsed = Date.now() - prev.roundStartTime;
+        const remaining = Math.max(0, PHASES[round.phase].timePerRound - elapsed);
 
-  // ── Feedback → next round ───────────────────────────────────────────────
+        if (remaining <= 0) {
+          return {
+            ...prev,
+            timeRemaining: 0,
+            isAnswered: true,
+            correctIndex: round.correctIndex,
+            selectedItem: -1,
+            combo: 0,
+            total: prev.total + 1,
+            typeLabel: TYPE_LABELS[round.type] || '',
+          };
+        }
+        return { ...prev, timeRemaining: remaining };
+      });
+    }, 50);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [state.phaseTransition, state.gameEnded, state.isAnswered, roundIndex, rounds]);
+
+  // ─── Handle Answer ────────────────────────────────────────────────────────────
+
+  const handleSelect = useCallback(
+    (index: number) => {
+      if (state.isAnswered || state.phaseTransition || state.gameEnded) return;
+      const round = rounds[roundIndex];
+      if (!round) return;
+
+      const isCorrect = index === round.correctIndex;
+      const reactionTime = Date.now() - state.roundStartTime;
+      const maxTime = PHASES[round.phase].timePerRound;
+
+      const basePoints = 100;
+      const speedBonus = Math.max(0, 1 - reactionTime / maxTime);
+      const newCombo = isCorrect ? state.combo + 1 : 0;
+      const comboMultiplier = 1 + Math.max(0, newCombo - 1) * 0.15;
+      const pointsEarned = isCorrect ? Math.round(basePoints * (0.5 + speedBonus * 0.5) * comboMultiplier) : 0;
+
+      setState((prev) => ({
+        ...prev,
+        isAnswered: true,
+        selectedItem: index,
+        correctIndex: round.correctIndex,
+        combo: newCombo,
+        bestCombo: Math.max(prev.bestCombo, newCombo),
+        score: prev.score + pointsEarned,
+        correct: prev.correct + (isCorrect ? 1 : 0),
+        total: prev.total + 1,
+        scorePop: isCorrect ? `+${pointsEarned}` : null,
+        scorePopKey: prev.scorePopKey + 1,
+        comboKey: prev.comboKey + (newCombo >= 3 ? 1 : 0),
+        typeLabel: TYPE_LABELS[round.type] || '',
+      }));
+    },
+    [state.isAnswered, state.phaseTransition, state.gameEnded, state.combo, state.roundStartTime, roundIndex, rounds]
+  );
+
+  // ─── Advance Round ────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (state.phase !== 'feedback') return;
-    feedbackRef.current = setTimeout(() => {
-      setState(prev => {
-        const nextRound = prev.currentRound + 1;
-        if (nextRound >= rounds.length) return { ...prev, phase: 'ended' };
+    if (!state.isAnswered) return;
+
+    const timer = setTimeout(() => {
+      setState((prev) => {
+        const nextIndex = prev.roundIndex + 1;
+        const nextRound = rounds[nextIndex];
+        const prevRound = rounds[prev.roundIndex];
+
+        // Check if entering a new phase
+        if (nextRound && prevRound && nextRound.phase !== prevRound.phase) {
+          const np = PHASES[nextRound.phase];
+          return {
+            ...prev,
+            phaseTransition: {
+              title: `Phase ${nextRound.phase + 1}: ${np.name}`,
+              subtitle: `${np.count} rounds \u2022 ${np.timePerRound / 1000}s each`,
+              isFinal: nextRound.phase === PHASES.length - 1,
+            },
+            isAnswered: false,
+            selectedItem: null,
+            roundIndex: nextIndex,
+          };
+        }
+
+        // Check if game is over
+        if (!nextRound) {
+          const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+          const accuracy = prev.total > 0 ? (prev.correct / prev.total) * 100 : 0;
+          const stars = accuracy >= 90 ? 3 : accuracy >= 70 ? 2 : accuracy >= 50 ? 1 : 0;
+
+          // Use non-reactive store call inside setState to avoid stale closure
+          useGameStore.getState().completeSession({
+            game: 'oddone',
+            score: prev.score,
+            stars,
+            accuracy,
+            bestCombo: prev.bestCombo,
+            timeElapsed: elapsed,
+            isDaily: false,
+            extra: `${prev.correct}/${prev.total} correct`,
+          });
+          return { ...prev, gameEnded: true };
+        }
+
+        // Next round
         return {
           ...prev,
-          phase: 'playing',
-          currentRound: nextRound,
-          tappedIndex: null,
-          lastCorrect: false,
+          roundIndex: nextIndex,
+          timeRemaining: PHASES[nextRound.phase].timePerRound,
+          isAnswered: false,
+          selectedItem: null,
+          roundKey: prev.roundKey + 1,
           roundStartTime: Date.now(),
+          scorePop: null,
+          typeLabel: '',
         };
       });
     }, FEEDBACK_DURATION);
-    return () => { if (feedbackRef.current) clearTimeout(feedbackRef.current); };
-  }, [state.phase, rounds.length]);
 
-  // ── Game ended → completeSession ────────────────────────────────────────
+    return () => clearTimeout(timer);
+  }, [state.isAnswered, rounds]);
+
+  // ─── Phase Transition ─────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (state.phase !== 'ended' || completeSessionCalledRef.current) return;
-    completeSessionCalledRef.current = true;
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (!state.phaseTransition) return;
 
-    const accuracy = state.totalAttempts > 0
-      ? Math.round((state.totalCorrect / state.totalAttempts) * 100) : 0;
-    const avgReaction = state.reactionTimes.length > 0
-      ? state.reactionTimes.reduce((a, b) => a + b, 0) / state.reactionTimes.length : 0;
-
-    // Stars: accuracy + speed
-    let stars = 0;
-    if (accuracy >= 90 && avgReaction < 2500) stars = 3;
-    else if (accuracy >= 80) stars = 2;
-    else if (accuracy >= 60) stars = 1;
-
-    useGameStore.getState().completeSession({
-      game: 'oddone',
-      score: state.score,
-      stars,
-      accuracy,
-      bestCombo: state.bestCombo,
-      timeElapsed: GLOBAL_TIME - state.globalTime,
-      isDaily: false,
-      extra: `${state.totalCorrect}/${state.totalAttempts} correct`,
-    });
-  }, [state.phase, state.score, state.totalCorrect, state.totalAttempts, state.bestCombo, state.globalTime, state.reactionTimes]);
-
-  // ── Handle tap ──────────────────────────────────────────────────────────
-
-  const handleTap = useCallback((index: number) => {
-    setState(prev => {
-      if (prev.phase !== 'playing' || !currentRound) return prev;
-
-      const reactionMs = Date.now() - prev.roundStartTime;
-      const isCorrect = index === currentRound.oddIndex;
-      const newCombo = isCorrect ? prev.combo + 1 : 0;
-      const newBest = Math.max(prev.bestCombo, newCombo);
-
-      // Scoring
-      let points = 0;
-      if (isCorrect) {
-        const speedBonus = Math.round(
-          SPEED_BONUS_MAX * Math.max(0, 1 - reactionMs / SPEED_BONUS_TIME)
-        );
-        const comboMultiplier = 1 + (newCombo - 1) * 0.25;
-        points = Math.round((BASE_SCORE + speedBonus) * comboMultiplier);
-      } else {
-        points = -50;
-      }
-
-      const newReactionTimes = isCorrect
-        ? [...prev.reactionTimes, reactionMs]
-        : prev.reactionTimes;
-
-      return {
+    const timer = setTimeout(() => {
+      setState((prev) => ({
         ...prev,
-        phase: 'feedback',
-        tappedIndex: index,
-        lastCorrect: isCorrect,
-        score: Math.max(0, prev.score + points),
-        combo: newCombo,
-        bestCombo: newBest,
-        totalCorrect: prev.totalCorrect + (isCorrect ? 1 : 0),
-        totalAttempts: prev.totalAttempts + 1,
-        reactionTimes: newReactionTimes,
-        scorePop: isCorrect ? `+${points}` : `${points}`,
-        scorePopKey: prev.scorePopKey + 1,
-      };
-    });
-  }, [currentRound]);
+        phaseTransition: null,
+        timeRemaining: PHASES[rounds[prev.roundIndex]?.phase ?? 0].timePerRound,
+        roundKey: prev.roundKey + 1,
+        roundStartTime: Date.now(),
+      }));
+    }, PHASE_TRANSITION_DURATION);
 
-  // ── Derived ─────────────────────────────────────────────────────────────
+    return () => clearTimeout(timer);
+  }, [state.phaseTransition, rounds]);
 
-  const timePercent = (state.globalTime / GLOBAL_TIME) * 100;
-  const timeColor = state.globalTime <= 15 ? '#FF3B30' : state.globalTime <= 30 ? '#FF9600' : '#333';
-  const mins = Math.floor(state.globalTime / 60);
-  const secs = state.globalTime % 60;
+  // ─── Derived values ───────────────────────────────────────────────────────────
 
-  // ── Render ──────────────────────────────────────────────────────────────
+  const progress = roundIndex / totalRounds;
+  const timerFraction = currentPhase ? state.timeRemaining / currentPhase.timePerRound : 0;
+  const displayMode = currentRound?.displayMode ?? 'emoji';
 
-  if (!currentRound) return null;
+  // ─── Phase Transition Overlay ─────────────────────────────────────────────────
+
+  if (state.phaseTransition) {
+    const pt = state.phaseTransition;
+    const phaseColor = PHASES[rounds[roundIndex]?.phase ?? 0].color;
+    return (
+      <div
+        className="min-h-[100dvh] flex flex-col items-center justify-center px-5"
+        style={{ background: 'linear-gradient(180deg, #E0FFF7 0%, #F9F9F9 100%)' }}
+      >
+        <div className="text-center phase-flash">
+          <div
+            className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
+            style={{ backgroundColor: phaseColor + '20' }}
+          >
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={phaseColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-extrabold text-[#333]">{pt.title}</h2>
+          <p className="text-base text-[#999] mt-2">{pt.subtitle}</p>
+          {pt.isFinal && (
+            <p className="text-sm font-bold mt-3" style={{ color: phaseColor }}>
+              Final stretch \u2014 stay focused!
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Main Game ────────────────────────────────────────────────────────────────
+
+  if (!currentRound) {
+    return (
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center px-5">
+        <div className="animate-pulse text-[#999]">Loading...</div>
+      </div>
+    );
+  }
+
+  const gridCols =
+    currentRound.items.length <= 4
+      ? 'grid-cols-2'
+      : 'grid-cols-3';
 
   return (
-    <div className="min-h-[100dvh] flex flex-col" style={{ background: '#F9F9F9' }}>
-      <div className="flex-1 flex flex-col max-w-sm mx-auto w-full px-5 pt-safe">
+    <div className="min-h-[100dvh] flex flex-col pb-24 pt-safe" style={{ background: '#F9F9F9' }}>
+      <div className="h-4" />
 
-        {/* Header */}
-        <div className="pt-4 pb-2">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-[13px] font-bold" style={{ color: '#00BFA6' }}>
-                Round {Math.min(state.currentRound + 1, rounds.length)}/{rounds.length}
-              </span>
-              {state.combo > 1 && (
-                <span
-                  key={state.combo}
-                  className="text-[12px] font-extrabold px-2 py-0.5 rounded-full"
-                  style={{ background: '#E0FFF7', color: '#00BFA6', animation: 'comboIn 0.3s ease-out' }}
-                >
-                  x{state.combo}
-                </span>
-              )}
-            </div>
-            <span className="text-[13px] font-bold" style={{ color: '#00BFA6' }}>{state.score} pts</span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-2.5 bg-[#F0F0F0] rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-1000"
-                style={{
-                  width: `${timePercent}%`,
-                  background: timeColor,
-                  animation: state.globalTime <= 15 ? 'pulse 1s infinite' : 'none',
-                }}
-              />
-            </div>
-            <span className="text-[12px] font-bold tabular-nums" style={{ color: timeColor, minWidth: 48, textAlign: 'right' }}>
-              {mins}:{secs.toString().padStart(2, '0')}
+      {/* Header Bar */}
+      <div className="px-5 flex items-center gap-3">
+        <button
+          onClick={() => {
+            if (timerRef.current) clearInterval(timerRef.current);
+            setScreen('home');
+          }}
+          className="w-9 h-9 rounded-full bg-white flex items-center justify-center shrink-0"
+          style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12" />
+            <polyline points="12 19 5 12 12 5" />
+          </svg>
+        </button>
+        <div className="flex-1">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-bold" style={{ color: currentPhase?.color || '#999' }}>
+              {PHASES[currentRound.phase].name}
+            </span>
+            <span className="text-xs font-bold text-[#999]">
+              {roundIndex + 1}/{totalRounds}
             </span>
           </div>
-        </div>
-
-        {/* Instruction */}
-        <div className="text-center mt-4 mb-2">
-          <p className="text-[15px] font-bold" style={{ color: '#333' }}>Tap the odd one out</p>
-          <p className="text-[12px] mt-0.5" style={{ color: '#999' }}>
-            {currentRound.type === 'category' ? 'Three belong together, one does not' : 'Find the number that breaks the pattern'}
-          </p>
-        </div>
-
-        {/* 2x2 Grid */}
-        <div className="grid grid-cols-2 gap-3 mt-4">
-          {currentRound.items.map((item, i) => {
-            const isOdd = i === currentRound.oddIndex;
-            const isTapped = state.tappedIndex === i;
-            const showResult = state.phase === 'feedback';
-
-            let bgColor = '#fff';
-            let borderColor = '#E8E8E8';
-            let textColor = '#333';
-
-            if (showResult && isOdd && isTapped) {
-              // Correctly tapped the odd one
-              bgColor = '#E0FFF7';
-              borderColor = '#00BFA6';
-              textColor = '#00856F';
-            } else if (showResult && isOdd && !isTapped) {
-              // Odd one revealed (wasn't tapped)
-              bgColor = '#FFF0F0';
-              borderColor = '#FF3B30';
-              textColor = '#CC0000';
-            } else if (showResult && !isOdd && isTapped) {
-              // Wrongly tapped a normal one
-              bgColor = '#FFF0F0';
-              borderColor = '#FF3B30';
-              textColor = '#CC0000';
-            } else if (showResult && !isOdd && !isTapped) {
-              // Normal item not tapped
-              bgColor = '#E0FFF7';
-              borderColor = '#00BFA6';
-              textColor = '#00856F';
-            }
-
-            return (
-              <button
-                key={`${state.currentRound}-${i}`}
-                onClick={() => handleTap(i)}
-                disabled={state.phase !== 'playing'}
-                className="rounded-2xl flex items-center justify-center p-5 transition-all duration-200 active:scale-95"
-                style={{
-                  background: bgColor,
-                  border: `2.5px solid ${borderColor}`,
-                  boxShadow: '0 2px 12px rgba(0,0,0,0.05)',
-                  minHeight: 110,
-                }}
-              >
-                <span
-                  className="text-[20px] font-bold text-center break-all leading-tight"
-                  style={{ color: textColor }}
-                >
-                  {currentRound.type === 'number' ? item : item.charAt(0).toUpperCase() + item.slice(1)}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Feedback explanation */}
-        {state.phase === 'feedback' && (
-          <div
-            className="mt-4 text-center"
-            style={{ animation: 'toastIn 0.3s ease-out' }}
-          >
-            <p className="text-[14px] font-bold" style={{
-              color: state.lastCorrect ? '#00BFA6' : '#FF3B30',
-            }}>
-              {state.lastCorrect ? 'Correct!' : 'Wrong!'}
-            </p>
-            <p className="text-[12px] mt-1" style={{ color: '#999' }}>
-              {currentRound.explanation}
-            </p>
+          <div className="w-full h-2 bg-[#E8E8E8] rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{ width: `${progress * 100}%`, backgroundColor: currentPhase?.color || '#00BFA6' }}
+            />
           </div>
-        )}
-
-        {/* Score pop */}
-        {state.scorePop && (
-          <div
-            key={state.scorePopKey}
-            className="pointer-events-none font-extrabold fixed top-1/3 left-1/2"
-            style={{
-              fontSize: 28,
-              color: state.lastCorrect ? '#00BFA6' : '#FF3B30',
-              transform: 'translate(-50%, -50%)',
-              animation: 'scorePop 0.8s ease-out forwards',
-              zIndex: 50,
-            }}
-          >
-            {state.scorePop}
-          </div>
-        )}
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Bottom stats */}
-        {state.phase === 'playing' && (
-          <div className="pb-8 flex justify-center gap-6">
-            <div className="text-center">
-              <p className="text-[20px] font-extrabold" style={{ color: '#333' }}>{state.totalCorrect}</p>
-              <p className="text-[11px] font-medium" style={{ color: '#999' }}>Correct</p>
-            </div>
-            <div className="text-center">
-              <p className="text-[20px] font-extrabold" style={{ color: '#333' }}>{state.totalAttempts - state.totalCorrect}</p>
-              <p className="text-[11px] font-medium" style={{ color: '#999' }}>Wrong</p>
-            </div>
-            <div className="text-center">
-              <p className="text-[20px] font-extrabold" style={{ color: '#00BFA6' }}>{state.combo}</p>
-              <p className="text-[11px] font-medium" style={{ color: '#999' }}>Streak</p>
-            </div>
-          </div>
-        )}
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-lg font-extrabold text-[#333] leading-none">{state.score}</div>
+          <div className="text-[10px] text-[#999] font-medium">SCORE</div>
+        </div>
       </div>
+
+      {/* Timer Bar */}
+      <div className="px-5 mt-3">
+        <div className="w-full h-3 bg-[#E8E8E8] rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-75"
+            style={{
+              width: `${timerFraction * 100}%`,
+              backgroundColor: timerFraction > 0.3 ? (currentPhase?.color || '#00BFA6') : '#FF3B30',
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Type Label + Hint */}
+      <div className="px-5 mt-4 text-center">
+        <div
+          className="inline-flex items-center gap-1.5 bg-white rounded-full px-3 py-1 mb-2"
+          style={{ boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}
+        >
+          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: currentPhase?.color || '#00BFA6' }} />
+          <span className="text-xs font-bold text-[#999]">
+            {state.typeLabel || TYPE_LABELS[currentRound.type] || 'Find the odd one'}
+          </span>
+        </div>
+        <p className="text-sm text-[#999]">{currentRound.hint}</p>
+      </div>
+
+      {/* Combo */}
+      {state.combo >= 3 && (
+        <div key={state.comboKey} className="text-center mt-2 comboIn">
+          <span className="inline-block bg-[#FF9600] text-white text-xs font-extrabold px-3 py-1 rounded-full">
+            \u00d7{state.combo} COMBO!
+          </span>
+        </div>
+      )}
+
+      {/* Options Grid */}
+      <div className="flex-1 flex items-center justify-center px-5 mt-4">
+        <div key={state.roundKey} className={`grid ${gridCols} gap-3 w-full max-w-sm slide-in-right`}>
+          {currentRound.items.map((item, idx) => (
+            <OptionCard
+              key={state.roundKey * 100 + idx}
+              item={item}
+              index={idx}
+              displayMode={displayMode}
+              phaseColor={currentPhase?.color || '#00BFA6'}
+              selectedItem={state.selectedItem}
+              correctIndex={state.correctIndex}
+              isAnswered={state.isAnswered}
+              onSelect={handleSelect}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Score Pop */}
+      {state.scorePop && (
+        <div
+          key={state.scorePopKey}
+          className="fixed left-1/2 top-1/3 text-2xl font-extrabold text-[#58CC02] scorePop pointer-events-none z-50"
+        >
+          {state.scorePop}
+        </div>
+      )}
+
+      {/* Timeout feedback */}
+      {state.isAnswered && state.selectedItem === -1 && (
+        <div className="text-center mt-2 toastIn">
+          <span className="inline-block bg-[#FF3B30] text-white text-xs font-bold px-3 py-1 rounded-full">
+            Time's up!
+          </span>
+        </div>
+      )}
     </div>
+  );
+}
+
+// ─── Option Card (memoized) ─────────────────────────────────────────────────────
+
+function OptionCard({
+  item,
+  index,
+  displayMode,
+  phaseColor,
+  selectedItem,
+  correctIndex,
+  isAnswered,
+  onSelect,
+}: {
+  item: OddOneItem;
+  index: number;
+  displayMode: string;
+  phaseColor: string;
+  selectedItem: number | null;
+  correctIndex: number;
+  isAnswered: boolean;
+  onSelect: (i: number) => void;
+}) {
+  const isSelected = selectedItem === index;
+  const isCorrectReveal = isAnswered && index === correctIndex;
+  const isWrongReveal = isAnswered && isSelected && index !== correctIndex;
+
+  const borderColor = isCorrectReveal
+    ? '#58CC02'
+    : isWrongReveal
+    ? '#FF3B30'
+    : '#E8E8E8';
+
+  const bgColor = isCorrectReveal ? '#E8F8E0' : isWrongReveal ? '#FFECEB' : '#FFFFFF';
+
+  const boxShadow = isCorrectReveal
+    ? '0 0 0 3px rgba(88,204,2,0.3)'
+    : isWrongReveal
+    ? '0 0 0 3px rgba(255,59,48,0.3)'
+    : '0 2px 8px rgba(0,0,0,0.05)';
+
+  const isShape = displayMode === 'shape' || displayMode === 'size_shape' || displayMode === 'color';
+
+  const shapeSize = item.size ? `${24 + item.size * 20}px` : '56px';
+
+  return (
+    <button
+      onClick={() => onSelect(index)}
+      disabled={isAnswered}
+      className={`
+        relative flex flex-col items-center justify-center rounded-2xl p-4 min-h-[100px]
+        transition-all active:scale-95 cursor-pointer select-none
+        ${isAnswered ? 'pointer-events-none' : ''}
+        ${isWrongReveal ? 'card-shake' : ''}
+      `}
+      style={{
+        border: `3px solid ${borderColor}`,
+        backgroundColor: bgColor,
+        boxShadow,
+      }}
+    >
+      {isShape ? (
+        <div
+          style={{
+            backgroundColor: item.color || '#E0E0E0',
+            borderRadius: item.shapeType === 'circle' ? '50%' : item.shapeType === 'diamond' ? '4px' : '6px',
+            transform: item.rotation ? `rotate(${item.rotation}deg)` : undefined,
+            width: shapeSize,
+            height: shapeSize,
+            clipPath:
+              item.shapeType === 'triangle'
+                ? 'polygon(50% 0%, 0% 100%, 100% 100%)'
+                : item.shapeType === 'diamond'
+                ? 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)'
+                : item.shapeType === 'star'
+                ? 'polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)'
+                : item.shapeType === 'hexagon'
+                ? 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)'
+                : undefined,
+          }}
+        />
+      ) : displayMode === 'emoji' ? (
+        <span className="text-5xl leading-none select-none">{item.display}</span>
+      ) : displayMode === 'number' ? (
+        <span className="text-3xl font-extrabold text-[#333]">{item.display}</span>
+      ) : (
+        <span className="text-sm font-bold text-[#333] text-center leading-tight px-1">{item.display}</span>
+      )}
+
+      {/* Correct checkmark */}
+      {isCorrectReveal && (
+        <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[#58CC02] rounded-full flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        </span>
+      )}
+      {/* Wrong X mark */}
+      {isWrongReveal && (
+        <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[#FF3B30] rounded-full flex items-center justify-center">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </span>
+      )}
+    </button>
   );
 }
