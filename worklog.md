@@ -40,3 +40,24 @@ Stage Summary:
 - 51 pattern templates provide massive variety (ending in AT/IN/OG/UB/OP/UN, starting with ST/BR/CH/SH/FL, containing OO/EE/LL/SS, 3/4/5-letter words)
 - Letter tiles include duplicates for double-letter words (e.g., two L's for 'small', two E's for 'beer')
 - Shared dictionary module ready for future word games (Anagram Scramble, etc.)
+---
+Task ID: 1
+Agent: main
+Task: Implement Anagram Scramble game
+
+Work Log:
+- Read existing game components (MathSprint, WordPuzzle, CircuitConnect) and store to understand patterns
+- Created anagramGenerator.ts with optimized sub-anagram search (length-indexed + letter set pre-check)
+- Added profanity blocklist and quality filters (letter frequency scoring, rare letter exclusion)
+- Built AnagramScramble.tsx with 4 rounds, 45s/round timer, 180s global, combo scoring
+- Added conditional word counter (show when <=15 valid words)
+- Updated useGameStore.ts (added anagram to GameType and Screen)
+- Updated page.tsx, HomeScreen.tsx (5 exercises), ScoreScreen.tsx, globals.css
+- Build passes clean, pushed to GitHub
+
+Stage Summary:
+- New files: src/lib/anagramGenerator.ts, src/components/games/AnagramScramble.tsx
+- Modified: store, page, HomeScreen, ScoreScreen, globals.css
+- Generator: ~60ms, 100% reliability across 20 seeds tested
+- Scoring: 3-letter=100pts, 4=250, 5=500, 6=1000, 7=2000, combo multiplier
+- Stars: 3★ >=55%, 2★ >=35%, 1★ >=18% of total findable words
