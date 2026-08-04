@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type Screen = 'home' | 'memory' | 'word' | 'math' | 'circuit' | 'daily' | 'score';
-export type GameType = 'memory' | 'word' | 'math' | 'circuit';
+export type Screen = 'home' | 'memory' | 'word' | 'math' | 'circuit' | 'anagram' | 'daily' | 'score';
+export type GameType = 'memory' | 'word' | 'math' | 'circuit' | 'anagram';
 
 export interface SessionResults {
   game: GameType;
