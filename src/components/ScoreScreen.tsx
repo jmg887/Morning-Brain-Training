@@ -9,6 +9,7 @@ const GAME_INFO: Record<string, { name: string; icon: string; color: string }> =
   math: { name: 'Math Sprint', icon: '⚡', color: '#1CB0F6' },
   circuit: { name: 'Circuit Connect', icon: '🌐', color: '#FF9600' },
   anagram: { name: 'Anagram Scramble', icon: '🔀', color: '#FF3B30' },
+  oddone: { name: 'Odd One Out', icon: '🌀', color: '#00BFA6' },
 };
 
 // Build a Wordle-style visual grid for daily share card

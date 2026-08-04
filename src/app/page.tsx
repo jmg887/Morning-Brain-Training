@@ -7,6 +7,7 @@ import WordPuzzle from '@/components/games/WordPuzzle';
 import MathSprint from '@/components/games/MathSprint';
 import CircuitConnect from '@/components/games/CircuitConnect';
 import AnagramScramble from '@/components/games/AnagramScramble';
+import OddOneOut from '@/components/games/OddOneOut';
 import ScoreScreen from '@/components/ScoreScreen';
 import BottomNav from '@/components/BottomNav';
 
@@ -22,6 +23,7 @@ export default function Page() {
       {currentScreen === 'math' && <MathSprint />}
       {currentScreen === 'circuit' && <CircuitConnect />}
       {currentScreen === 'anagram' && <AnagramScramble />}
+      {currentScreen === 'oddone' && <OddOneOut />}
       {currentScreen === 'score' && <ScoreScreen />}
       <BottomNav />
     </div>
