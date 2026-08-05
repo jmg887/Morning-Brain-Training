@@ -368,7 +368,7 @@ export default function OddOneOut() {
       {state.combo >= 3 && (
         <div key={state.comboKey} className="text-center mt-2 comboIn">
           <span className="inline-block bg-[#FF9600] text-white text-xs font-extrabold px-3 py-1 rounded-full">
-            \u00d7{state.combo} COMBO!
+            {'\u00d7'}{state.combo} COMBO!
           </span>
         </div>
       )}

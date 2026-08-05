@@ -811,7 +811,7 @@ export default function MathSprint() {
             flexShrink: 0,
           }}
         >
-          \u2190 Back
+          {'\u2190'} Back
         </button>
 
         {/* Global timer bar + time */}
@@ -1027,7 +1027,7 @@ export default function MathSprint() {
             }}
           >
             {state.combo >= 5 && '\uD83D\uDD25 '}
-            \u00d7{state.combo}
+            {'\u00d7'}{state.combo}
           </div>
         )}
 
@@ -1203,7 +1203,7 @@ export default function MathSprint() {
                 marginBottom: 20,
               }}
             >
-              Best Combo: \u00d7{state.bestCombo} \u00b7{' '}
+              Best Combo: {'\u00d7'}{state.bestCombo} {'\u00b7'}{' '}
               {state.correct}/{state.total} correct
             </div>
 

@@ -664,7 +664,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
             })}
           </div>
           <div className="text-sm mb-4" style={{ color: '#999' }}>
-            {state.totalWordsFound} words found \u00b7 Best Combo: \u00d7{state.bestCombo} \u00b7 Accuracy: {accuracy}%
+            {state.totalWordsFound} words found {'\u00b7'} Best Combo: {'\u00d7'}{state.bestCombo} {'\u00b7'} Accuracy: {accuracy}%
           </div>
           <button
             onClick={() => useGameStore.getState().setScreen('home')}
@@ -691,7 +691,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
         <button
           onClick={() => { if (timerRef.current) clearInterval(timerRef.current); gameEndedRef.current = true; useGameStore.getState().setScreen('home'); }}
           className="text-sm font-semibold flex items-center gap-1" style={{ color: '#333', background: 'none', border: 'none', cursor: 'pointer' }}>
-          \u2190 Back
+          {'\u2190'} Back
         </button>
 
         <div className="flex flex-col items-center flex-1 mx-4">
@@ -778,7 +778,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
                 color: isRule ? '#7B1FA2' : '#E08600',
                 border: `1px solid ${isRule ? '#CE93D8' : '#FFD699'}`,
               }}>
-                \u2713 {w}
+                {'\u2713'} {w}
               </span>
             ))}
           </div>
@@ -872,12 +872,12 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
       <div className="mb-3" style={{ minHeight: 28, width: '100%', maxWidth: 300, textAlign: 'center' }}>
         {state.feedback === 'correct' && (
           <div key={`fb-c-${state.wordKey}`} className="text-base font-bold" style={{ color: '#58CC02', animation: 'slide-in-right 0.3s ease' }}>
-            \u2713 Correct!
+            {'\u2713'} Correct!
           </div>
         )}
         {state.feedback === 'wrong' && (
           <div key={`fb-w-${state.shakeKey}`} className="text-base font-bold" style={{ color: '#FF3B30', animation: 'slide-in-right 0.3s ease' }}>
-            \u2717 {isRule ? 'Not a match' : 'Not a word'}
+            {'\u2717'} {isRule ? 'Not a match' : 'Not a word'}
           </div>
         )}
         {state.feedback === 'already' && (
@@ -916,7 +916,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
         ) : (
           <button onClick={() => handlersRef.current?.onSkip()} className="px-5 py-3 rounded-xl text-base font-bold"
             style={{ background: '#F0F0F0', color: '#777', border: '2px solid #E0E0E0', borderBottom: '4px solid #D0D0D0', cursor: 'pointer' }}>
-            Skip \u2192
+            Skip {'\u2192'}
           </button>
         )}
       </div>
