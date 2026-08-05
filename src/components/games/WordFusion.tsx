@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameStore } from '@/store/useGameStore';
 import { generateRules } from '@/lib/wordRuleGenerator';
 import { generateAnagramPuzzles } from '@/lib/anagramGenerator';
+import { createSeededRandom, dateToSeed, getTodaySeedStr } from '@/lib/seededRandom';
 import type { GeneratedRule } from '@/lib/wordRuleGenerator';
 import type { AnagramPuzzle } from '@/lib/anagramGenerator';
 
@@ -59,7 +60,7 @@ interface PlayState {
 const PHASES: PhaseDef[] = [
   { name: 'Rule Finder', subtitle: 'Find words matching a hidden rule', color: '#CE82FF', roundTime: 45 },
   { name: 'Letter Scramble', subtitle: 'Unscramble letters to form words', color: '#FF9600', roundTime: 40 },
-  { name: 'Mixed Blitz', subtitle: 'Both modes — faster pace!', color: '#FF3B30', roundTime: 35 },
+  { name: 'Mixed Blitz', subtitle: 'Both modes \u2014 faster pace!', color: '#FF3B30', roundTime: 35 },
 ];
 
 const GLOBAL_TIME = 180;
@@ -79,14 +80,17 @@ function shuffleArray<T>(array: T[]): T[] {
   return arr;
 }
 
-function generateFusionRounds(): FusionRound[] {
-  const ruleRounds = generateRules(3); // 3 rule rounds (phase 0: 2, phase 2: 1)
-  const anagramRounds = generateAnagramPuzzles(3); // 3 anagram rounds (phase 1: 2, phase 2: 1)
+function generateFusionRounds(seed?: number): FusionRound[] {
+  const ruleSeed = seed !== undefined ? seed : undefined;
+  const anagramSeed = seed !== undefined ? seed + 1000 : undefined;
+
+  const ruleRounds = generateRules(3, ruleSeed);
+  const anagramRounds = generateAnagramPuzzles(3, anagramSeed);
 
   const rounds: FusionRound[] = [];
 
   // Phase 0: 2 rule rounds
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 2 && i < ruleRounds.length; i++) {
     const r = ruleRounds[i];
     rounds.push({
       type: 'rule',
@@ -100,7 +104,7 @@ function generateFusionRounds(): FusionRound[] {
   }
 
   // Phase 1: 2 anagram rounds
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 2 && i < anagramRounds.length; i++) {
     const a = anagramRounds[i];
     rounds.push({
       type: 'anagram',
@@ -113,28 +117,31 @@ function generateFusionRounds(): FusionRound[] {
     });
   }
 
-  // Phase 2: 1 rule + 1 anagram
-  const ruleR = ruleRounds[2];
-  rounds.push({
-    type: 'rule',
-    letters: ruleR.letters,
-    shuffledLetters: shuffleArray(ruleR.letters),
-    clue: ruleR.description,
-    validWords: ruleR.validWords,
-    roundTime: PHASES[2].roundTime,
-    phase: 2,
-  });
-
-  const anagramR = anagramRounds[2];
-  rounds.push({
-    type: 'anagram',
-    letters: anagramR.letters,
-    shuffledLetters: [...anagramR.letters],
-    clue: null,
-    validWords: anagramR.validWords,
-    roundTime: PHASES[2].roundTime,
-    phase: 2,
-  });
+  // Phase 2: 1 rule + 1 anagram (if available)
+  if (ruleRounds.length > 2) {
+    const ruleR = ruleRounds[2];
+    rounds.push({
+      type: 'rule',
+      letters: ruleR.letters,
+      shuffledLetters: shuffleArray(ruleR.letters),
+      clue: ruleR.description,
+      validWords: ruleR.validWords,
+      roundTime: PHASES[2].roundTime,
+      phase: 2,
+    });
+  }
+  if (anagramRounds.length > 2) {
+    const anagramR = anagramRounds[2];
+    rounds.push({
+      type: 'anagram',
+      letters: anagramR.letters,
+      shuffledLetters: [...anagramR.letters],
+      clue: null,
+      validWords: anagramR.validWords,
+      roundTime: PHASES[2].roundTime,
+      phase: 2,
+    });
+  }
 
   return rounds;
 }
@@ -171,9 +178,19 @@ function createInitialState(): PlayState {
 
 // ─── Component ──────────────────────────────────────────────────────────────────
 
-export default function WordFusion() {
-  const roundsRef = useRef<FusionRound[]>(generateFusionRounds());
-  const rounds = roundsRef.current;
+interface WordFusionProps {
+  isDaily?: boolean;
+}
+
+export default function WordFusion({ isDaily = false }: WordFusionProps) {
+  // ── Generate rounds (stable across renders) ──
+  const [rounds] = useState<FusionRound[]>(() => {
+    if (isDaily) {
+      const seed = dateToSeed(getTodaySeedStr());
+      return generateFusionRounds(seed);
+    }
+    return generateFusionRounds();
+  });
   const totalRounds = rounds.length;
 
   const [state, setStateRaw] = useState<PlayState>(createInitialState);
@@ -184,6 +201,7 @@ export default function WordFusion() {
 
   const stateRef = useRef(state);
   const shuffledRef = useRef<string[][]>(rounds.map((r) => r.shuffledLetters));
+  const roundsRef = useRef(rounds);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const typewriterRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const gameEndedRef = useRef(false);
@@ -223,17 +241,29 @@ export default function WordFusion() {
     [setState]
   );
 
-  // ─── End Game ────────────────────────────────────────────────────────────────
+  // ─── End Game (sets phase to ended; completeSession called via useEffect) ─────
 
   const endGame = useCallback(() => {
     if (gameEndedRef.current) return;
     gameEndedRef.current = true;
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (typewriterRef.current) { clearInterval(typewriterRef.current); typewriterRef.current = null; }
+    setState({ phase: 'ended' });
+  }, [setState]);
 
+  // ─── Complete session when phase becomes ended ─────────────────────────────
+
+  const completeSession = useCallback(() => {
     const s = stateRef.current;
     const accuracy = s.totalAttempts > 0 ? Math.round((s.totalCorrect / s.totalAttempts) * 100) : 0;
     const stars = accuracy >= 90 ? 3 : accuracy >= 70 ? 2 : accuracy >= 50 ? 1 : 0;
+
+    // Build round scores for daily share card
+    const roundScores = [...s.wordsPerRound];
+    // Pad if game ended mid-round
+    while (roundScores.length < totalRounds) {
+      roundScores.push(0);
+    }
 
     useGameStore.getState().completeSession({
       game: 'word',
@@ -242,9 +272,26 @@ export default function WordFusion() {
       accuracy,
       bestCombo: s.bestCombo,
       timeElapsed: GLOBAL_TIME - s.globalTime,
-      isDaily: false,
+      isDaily,
       extra: s.totalWordsFound + ' words',
+      roundScores: isDaily ? roundScores : undefined,
     });
+  }, [isDaily, totalRounds]);
+
+  useEffect(() => {
+    if (state.phase === 'ended') {
+      completeSession();
+    }
+  }, [state.phase, completeSession]);
+
+  // ─── Save Round Words (helper — does NOT add to totalWordsFound) ────────────
+
+  const saveRoundWords = useCallback((s: PlayState): Partial<PlayState> => {
+    return {
+      wordsPerRound: [...s.wordsPerRound, s.foundWords.length],
+      foundWords: [],
+      selectedIndices: [],
+    };
   }, []);
 
   // ─── Advance to Next Round ───────────────────────────────────────────────────
@@ -252,12 +299,13 @@ export default function WordFusion() {
   const advanceRound = useCallback(() => {
     const s = stateRef.current;
     const nextIdx = s.roundIndex + 1;
-    const nextRound = rounds[nextIdx];
+    const nextRound = roundsRef.current[nextIdx];
 
     if (!nextRound) { endGame(); return; }
 
-    // Check phase change
-    if (nextRound.phase !== currentRound?.phase) {
+    // Check phase change using refs (avoids stale closure)
+    const prevRound = roundsRef.current[s.roundIndex];
+    if (nextRound.phase !== prevRound?.phase) {
       setState({
         phase: 'phase_intro',
         roundIndex: nextIdx,
@@ -284,7 +332,7 @@ export default function WordFusion() {
       });
       if (nextRound.clue) startTypewriter(nextRound.clue);
     }
-  }, [rounds, currentRound, setState, startTypewriter, endGame]);
+  }, [setState, startTypewriter, endGame]);
 
   // ─── Timer Tick ──────────────────────────────────────────────────────────────
 
@@ -297,33 +345,34 @@ export default function WordFusion() {
     const newGlobalTime = s.globalTime - 1;
 
     if (newGlobalTime <= 0) {
-      // Save current round words
-      const updatedWordsPerRound = [...s.wordsPerRound, s.foundWords.length];
-      setState({ roundTime: 0, globalTime: 0, wordsPerRound: updatedWordsPerRound, totalWordsFound: s.totalWordsFound + s.foundWords.length });
+      // Save current round words count (no double-counting)
+      const roundSave = saveRoundWords(s);
+      setState({
+        roundTime: 0,
+        globalTime: 0,
+        ...roundSave,
+      });
       endGame();
       return;
     }
 
     if (newRoundTime <= 0) {
-      const updatedWordsPerRound = [...s.wordsPerRound, s.foundWords.length];
+      const roundSave = saveRoundWords(s);
       setState({
         roundTime: 0,
         globalTime: newGlobalTime,
         phase: 'round_transition',
-        selectedIndices: [],
-        feedback: null,
-        wordsPerRound: updatedWordsPerRound,
+        ...roundSave,
         lastRoundFound: s.foundWords.length,
-        lastRoundType: rounds[s.roundIndex]?.type ?? null,
-        lastRoundClue: rounds[s.roundIndex]?.clue ?? null,
-        totalWordsFound: s.totalWordsFound + s.foundWords.length,
+        lastRoundType: roundsRef.current[s.roundIndex]?.type ?? null,
+        lastRoundClue: roundsRef.current[s.roundIndex]?.clue ?? null,
       });
       setTimeout(() => { if (!gameEndedRef.current) advanceRound(); }, 2500);
       return;
     }
 
     setState({ roundTime: newRoundTime, globalTime: newGlobalTime });
-  }, [setState, endGame, advanceRound, rounds]);
+  }, [setState, endGame, advanceRound, saveRoundWords]);
 
   // ─── Handlers ────────────────────────────────────────────────────────────────
 
@@ -346,7 +395,7 @@ export default function WordFusion() {
 
     const letters = shuffledRef.current[s.roundIndex];
     const word = s.selectedIndices.map((i) => letters[i]).join('').toLowerCase();
-    const round = rounds[s.roundIndex];
+    const round = roundsRef.current[s.roundIndex];
 
     if (s.foundWords.includes(word)) {
       setState({ feedback: 'already', feedbackWord: word, shakeKey: s.shakeKey + 1 });
@@ -374,7 +423,7 @@ export default function WordFusion() {
         bestCombo: Math.max(s.bestCombo, newCombo),
         totalCorrect: s.totalCorrect + 1,
         totalAttempts: newTotalAttempts,
-        totalWordsFound: s.totalWordsFound + 1,
+        totalWordsFound: s.totalWordsFound + 1, // increment by 1 per word found
         feedback: 'correct',
         feedbackWord: word,
         scorePop: allFound ? `+${points + bonusPts} All found!` : `+${points}`,
@@ -383,21 +432,19 @@ export default function WordFusion() {
         wordKey: s.wordKey + 1,
       });
 
-      // All found → auto-advance
+      // All found -> auto-advance after short delay
       if (allFound) {
         setTimeout(() => {
           if (gameEndedRef.current) return;
           const cur = stateRef.current;
           if (cur.phase !== 'playing') return;
-          const updatedWordsPerRound = [...cur.wordsPerRound, cur.foundWords.length];
+          const roundSave = saveRoundWords(cur);
           const timeBonus = round.type === 'rule' ? cur.roundTime : 0;
           setState({
             phase: 'round_transition',
             roundTime: 0,
             globalTime: Math.min(cur.globalTime + timeBonus, GLOBAL_TIME),
-            selectedIndices: [],
-            feedback: null,
-            wordsPerRound: updatedWordsPerRound,
+            ...roundSave,
             lastRoundFound: cur.foundWords.length,
             lastRoundType: round.type,
             lastRoundClue: round.clue,
@@ -419,7 +466,7 @@ export default function WordFusion() {
       });
       setTimeout(() => { if (!gameEndedRef.current) setState({ feedback: null, feedbackWord: '' }); }, FEEDBACK_CLEAR_DELAY);
     }
-  }, [setState, rounds]);
+  }, [setState, saveRoundWords, advanceRound]);
 
   const onClear = useCallback(() => {
     const s = stateRef.current;
@@ -454,20 +501,17 @@ export default function WordFusion() {
   const onSkip = useCallback(() => {
     const s = stateRef.current;
     if (s.phase !== 'playing' || gameEndedRef.current) return;
-    const updatedWordsPerRound = [...s.wordsPerRound, s.foundWords.length];
+    const roundSave = saveRoundWords(s);
     setState({
       phase: 'round_transition',
       roundTime: 0,
-      selectedIndices: [],
-      feedback: null,
-      wordsPerRound: updatedWordsPerRound,
+      ...roundSave,
       lastRoundFound: s.foundWords.length,
-      lastRoundType: rounds[s.roundIndex]?.type ?? null,
-      lastRoundClue: rounds[s.roundIndex]?.clue ?? null,
-      totalWordsFound: s.totalWordsFound + s.foundWords.length,
+      lastRoundType: roundsRef.current[s.roundIndex]?.type ?? null,
+      lastRoundClue: roundsRef.current[s.roundIndex]?.clue ?? null,
     });
     setTimeout(() => { if (!gameEndedRef.current) advanceRound(); }, 2000);
-  }, [setState, rounds, advanceRound]);
+  }, [setState, advanceRound, saveRoundWords]);
 
   // ─── Assign handlers ref ────────────────────────────────────────────────────
 
@@ -493,12 +537,12 @@ export default function WordFusion() {
     if (state.phase !== 'phase_intro') return;
     const t = setTimeout(() => {
       if (gameEndedRef.current) return;
-      const r = rounds[stateRef.current.roundIndex];
+      const r = roundsRef.current[stateRef.current.roundIndex];
       setState({ phase: 'playing', roundTime: r.roundTime });
       if (r.clue) startTypewriter(r.clue);
     }, 2000);
     return () => clearTimeout(t);
-  }, [state.phase, rounds, setState, startTypewriter]);
+  }, [state.phase, setState, startTypewriter]);
 
   // ─── Derived ─────────────────────────────────────────────────────────────────
 
@@ -540,8 +584,8 @@ export default function WordFusion() {
   const ringContainerSize = (ringRadius + TILE_SIZE_RULE / 2) * 2;
 
   // ═══════════════════════════════════════════════════════════════════════════
-// RENDER
-// ═══════════════════════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════════════════════
 
   // ─── Phase Intro Overlay ─────────────────────────────────────────────────────
 
@@ -554,7 +598,8 @@ export default function WordFusion() {
           <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
             style={{ backgroundColor: pd.color + '20' }}>
             <span className="text-3xl">
-              {currentRound.type === 'rule' ? '\u{1F9E0}' : '\u{1F500}'}</span>
+              {currentRound.type === 'rule' ? '\u{1F9E0}' : '\u{1F500}'}
+            </span>
           </div>
           <h2 className="text-2xl font-extrabold text-[#333]">Phase {currentRound.phase + 1}: {pd.name}</h2>
           <p className="text-base text-[#999] mt-2">{pd.subtitle}</p>
@@ -590,14 +635,56 @@ export default function WordFusion() {
     );
   }
 
+  // ─── Game Ended Overlay ─────────────────────────────────────────────────────
+
+  if (state.phase === 'ended') {
+    const accuracy = state.totalAttempts > 0 ? Math.round((state.totalCorrect / state.totalAttempts) * 100) : 0;
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center px-5"
+        style={{ background: '#F9F9F9' }}>
+        <div className="text-center p-6 rounded-2xl mx-4"
+          style={{ background: '#fff', maxWidth: 320, width: '100%', animation: 'slide-up 0.4s ease' }}>
+          <div className="text-2xl font-black mb-1" style={{ color: '#333' }}>
+            {state.globalTime <= 0 ? "Time's Up!" : 'Great Job!'}
+          </div>
+          <div className="text-lg font-bold mb-4" style={{ color: '#58CC02' }}>
+            Score: {state.score}
+          </div>
+          <div className="flex justify-center gap-2 mb-4">
+            {[1, 2, 3].map((s) => {
+              let stars = 0;
+              if (accuracy >= 90) stars = 3;
+              else if (accuracy >= 70) stars = 2;
+              else if (accuracy >= 50) stars = 1;
+              return (
+                <span key={s} className="text-4xl" style={{ opacity: s <= stars ? 1 : 0.2 }}>
+                  {'\u2b50'}
+                </span>
+              );
+            })}
+          </div>
+          <div className="text-sm mb-4" style={{ color: '#999' }}>
+            {state.totalWordsFound} words found \u00b7 Best Combo: \u00d7{state.bestCombo} \u00b7 Accuracy: {accuracy}%
+          </div>
+          <button
+            onClick={() => useGameStore.getState().setScreen('home')}
+            className="w-full py-3 rounded-xl text-base font-bold"
+            style={{ background: 'linear-gradient(135deg, #58CC02, #58A700)', color: '#fff', border: 'none', cursor: 'pointer' }}>
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ─── Main Playing UI ────────────────────────────────────────────────────────
 
-  if (!currentRound || state.phase === 'ended') return null;
+  if (!currentRound) return null;
 
   const isRule = currentRound.type === 'rule';
 
   return (
-    <div className="flex flex-col items-center min-h-[100dvh] pb-24 pt-safe" style={{ background: '#F9F9F9' }}>
+    <div className="flex flex-col items-center min-h-[100dvh] pb-24 pt-safe relative" style={{ background: '#F9F9F9' }}>
 
       {/* ── Header ── */}
       <div className="w-full flex items-center justify-between px-4 py-3" style={{ maxWidth: 400 }}>
@@ -615,6 +702,11 @@ export default function WordFusion() {
         </div>
 
         <div className="flex items-center gap-2">
+          {isDaily && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: '#FF9600' }}>
+              DAILY
+            </span>
+          )}
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: phaseColor }}>
             {isRule ? 'RULE' : 'ANAGRAM'}
           </span>
@@ -639,7 +731,7 @@ export default function WordFusion() {
       <div className="flex items-center gap-1 mb-2" style={{ height: 28 }}>
         {state.combo >= 2 && (
           <div className="flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold"
-            style={{ background: state.combo >= 5 ? '#FF9600' : '#58CC02', color: '#fff' }}>
+            style={{ background: state.combo >= 5 ? '#FF9600' : '#58CC02', color: '#fff', animation: 'combo-pulse 0.5s ease' }}>
             {state.combo >= 5 && <span>{'\u{1F525}'}</span>}
             x{state.combo}
           </div>
@@ -740,7 +832,7 @@ export default function WordFusion() {
           {currentLetters.map((letter, i) => {
             const isSelected = state.selectedIndices.includes(i);
             return (
-              <button key={`${state.roundIndex}-${i}`}
+              <button key={`${state.wordKey}-${i}`}
                 onClick={() => handlersRef.current?.onLetterTap(i)}
                 className="rounded-xl font-extrabold text-white flex items-center justify-center select-none transition-all duration-100 active:scale-90"
                 style={{
@@ -766,6 +858,7 @@ export default function WordFusion() {
             background: currentWord ? '#fff' : 'transparent',
             border: `2px solid ${state.feedback === 'wrong' ? '#FF3B30' : currentWord ? '#E8E8E8' : 'transparent'}`,
             color: '#333', cursor: currentWord ? 'pointer' : 'default', minHeight: 44, minWidth: 80, justifyContent: 'center',
+            animation: state.feedback === 'wrong' ? `shake 0.5s ease ${state.shakeKey}` : 'none',
           }}>
           {currentWord ? (
             <span style={{ textTransform: isRule ? 'lowercase' : 'uppercase', letterSpacing: isRule ? 0 : 2 }}>{currentWord}</span>
@@ -830,16 +923,19 @@ export default function WordFusion() {
 
       {/* ── Score Pop ── */}
       {state.scorePop && (
-        <div key={`sp-${state.scorePopKey}`} className="absolute font-black text-xl" style={{ color: '#58CC02', animation: 'float-up 1s ease-out forwards', zIndex: 100, pointerEvents: 'none' }}>
+        <div key={`sp-${state.scorePopKey}`} className="fixed font-black text-xl" style={{ color: '#58CC02', animation: 'float-up 1s ease-out forwards', zIndex: 100, pointerEvents: 'none', top: '40%', left: '50%', transform: 'translateX(-50%)' }}>
           {state.scorePop}
         </div>
       )}
 
-      {/* ── Inline Styles ── */}
+      {/* ── Inline Styles / Keyframes ── */}
       <style jsx>{`
         @keyframes blink-cursor { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
         @keyframes float-up { 0% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-60px); } }
         @keyframes slide-in-right { 0% { opacity: 0; transform: translateX(20px); } 100% { opacity: 1; transform: translateX(0); } }
+        @keyframes slide-up { 0% { opacity: 0; transform: translateY(30px); } 100% { opacity: 1; transform: translateY(0); } }
+        @keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
+        @keyframes combo-pulse { 0% { transform: scale(1); } 50% { transform: scale(1.2); } 100% { transform: scale(1); } }
         .ring-glow { box-shadow: 0 0 16px ${phaseColor}80; }
       `}</style>
     </div>
