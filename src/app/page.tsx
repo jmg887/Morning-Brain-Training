@@ -6,7 +6,7 @@ import MemoryMatch from '@/components/games/MemoryMatch';
 import WordPuzzle from '@/components/games/WordPuzzle';
 import MathSprint from '@/components/games/MathSprint';
 import CircuitConnect from '@/components/games/CircuitConnect';
-import AnagramScramble from '@/components/games/AnagramScramble';
+import WordFusion from '@/components/games/WordFusion';
 import OddOneOut from '@/components/games/OddOneOut';
 import ScoreScreen from '@/components/ScoreScreen';
 import BottomNav from '@/components/BottomNav';
@@ -18,11 +18,10 @@ export default function Page() {
     <div className="relative min-h-[100dvh] overflow-x-hidden">
       {currentScreen === 'home' && <HomeScreen />}
       {currentScreen === 'memory' && <MemoryMatch />}
-      {currentScreen === 'word' && <WordPuzzle />}
       {currentScreen === 'daily' && <WordPuzzle isDaily />}
       {currentScreen === 'math' && <MathSprint />}
       {currentScreen === 'circuit' && <CircuitConnect />}
-      {currentScreen === 'anagram' && <AnagramScramble />}
+      {currentScreen === 'word' && <WordFusion />}
       {currentScreen === 'oddone' && <OddOneOut />}
       {currentScreen === 'score' && <ScoreScreen />}
       <BottomNav />

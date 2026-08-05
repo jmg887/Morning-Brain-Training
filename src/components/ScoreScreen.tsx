@@ -5,10 +5,9 @@ import { getDayNumber } from '@/lib/seededRandom';
 
 const GAME_INFO: Record<string, { name: string; icon: string; color: string }> = {
   memory: { name: 'Memory Match', icon: '🧠', color: '#58CC02' },
-  word: { name: 'Word Puzzle', icon: '📝', color: '#CE82FF' },
+  word: { name: 'Word Fusion', icon: '📝', color: '#CE82FF' },
   math: { name: 'Math Sprint', icon: '⚡', color: '#1CB0F6' },
   circuit: { name: 'Circuit Connect', icon: '🌐', color: '#FF9600' },
-  anagram: { name: 'Anagram Scramble', icon: '🔀', color: '#FF3B30' },
   oddone: { name: 'Odd One Out', icon: '🌀', color: '#00BFA6' },
 };
 
