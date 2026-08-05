@@ -3,10 +3,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameStore } from '@/store/useGameStore';
 import { generateRules } from '@/lib/wordRuleGenerator';
-import { generateAnagramPuzzles } from '@/lib/anagramGenerator';
-import { createSeededRandom, dateToSeed, getTodaySeedStr } from '@/lib/seededRandom';
+import { generateScramblePuzzles, MODE_INFO } from '@/lib/scrambleModes';
+import type { ScrambleMode, ScramblePuzzle } from '@/lib/scrambleModes';
+import { dateToSeed, getTodaySeedStr } from '@/lib/seededRandom';
 import type { GeneratedRule } from '@/lib/wordRuleGenerator';
-import type { AnagramPuzzle } from '@/lib/anagramGenerator';
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -20,6 +20,12 @@ interface FusionRound {
   validWords: string[];
   roundTime: number;
   phase: number;
+  // Scramble mode fields (anagram rounds only)
+  scrambleMode?: ScrambleMode;
+  scrambleHint?: string;
+  hiddenTarget?: string;
+  categoryLabel?: string;
+  lockedLength?: number;
 }
 
 interface PhaseDef {
@@ -53,6 +59,8 @@ interface PlayState {
   lastRoundFound: number;
   lastRoundType: RoundType | null;
   lastRoundClue: string | null;
+  lastRoundScrambleMode?: ScrambleMode;
+  hiddenTargetFound: boolean;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
@@ -85,9 +93,27 @@ function generateFusionRounds(seed?: number): FusionRound[] {
   const anagramSeed = seed !== undefined ? seed + 1000 : undefined;
 
   const ruleRounds = generateRules(3, ruleSeed);
-  const anagramRounds = generateAnagramPuzzles(3, anagramSeed);
+  // Generate 3 scramble puzzles with rotating modes
+  const scramblePuzzles = generateScramblePuzzles(3, anagramSeed ?? Date.now());
 
   const rounds: FusionRound[] = [];
+
+  // Helper: build mode-specific hint text
+  const getScrambleHint = (p: ScramblePuzzle): string => {
+    const info = MODE_INFO[p.mode];
+    switch (p.mode) {
+      case 'classic':
+        return info.hint;
+      case 'lengthLock':
+        return `Only ${p.lockedLength}-letter words count!`;
+      case 'hiddenTarget':
+        return `Find the hidden ${p.hiddenTarget?.length}-letter word for bonus!`;
+      case 'category':
+        return `Words containing ${p.categoryLabel} keywords`;
+      default:
+        return info.hint;
+    }
+  };
 
   // Phase 0: 2 rule rounds
   for (let i = 0; i < 2 && i < ruleRounds.length; i++) {
@@ -103,21 +129,26 @@ function generateFusionRounds(seed?: number): FusionRound[] {
     });
   }
 
-  // Phase 1: 2 anagram rounds
-  for (let i = 0; i < 2 && i < anagramRounds.length; i++) {
-    const a = anagramRounds[i];
+  // Phase 1: 2 scramble rounds (modes rotate)
+  for (let i = 0; i < 2 && i < scramblePuzzles.length; i++) {
+    const p = scramblePuzzles[i];
     rounds.push({
       type: 'anagram',
-      letters: a.letters,
-      shuffledLetters: [...a.letters],
-      clue: null,
-      validWords: a.validWords,
+      letters: p.letters,
+      shuffledLetters: [...p.letters],
+      clue: getScrambleHint(p),
+      validWords: p.validWords,
       roundTime: PHASES[1].roundTime,
       phase: 1,
+      scrambleMode: p.mode,
+      scrambleHint: getScrambleHint(p),
+      hiddenTarget: p.hiddenTarget,
+      categoryLabel: p.categoryLabel,
+      lockedLength: p.lockedLength,
     });
   }
 
-  // Phase 2: 1 rule + 1 anagram (if available)
+  // Phase 2: 1 rule + 1 scramble (if available)
   if (ruleRounds.length > 2) {
     const ruleR = ruleRounds[2];
     rounds.push({
@@ -130,16 +161,21 @@ function generateFusionRounds(seed?: number): FusionRound[] {
       phase: 2,
     });
   }
-  if (anagramRounds.length > 2) {
-    const anagramR = anagramRounds[2];
+  if (scramblePuzzles.length > 2) {
+    const p = scramblePuzzles[2];
     rounds.push({
       type: 'anagram',
-      letters: anagramR.letters,
-      shuffledLetters: [...anagramR.letters],
-      clue: null,
-      validWords: anagramR.validWords,
+      letters: p.letters,
+      shuffledLetters: [...p.letters],
+      clue: getScrambleHint(p),
+      validWords: p.validWords,
       roundTime: PHASES[2].roundTime,
       phase: 2,
+      scrambleMode: p.mode,
+      scrambleHint: getScrambleHint(p),
+      hiddenTarget: p.hiddenTarget,
+      categoryLabel: p.categoryLabel,
+      lockedLength: p.lockedLength,
     });
   }
 
@@ -173,6 +209,8 @@ function createInitialState(): PlayState {
     lastRoundFound: 0,
     lastRoundType: null,
     lastRoundClue: null,
+    lastRoundScrambleMode: undefined,
+    hiddenTargetFound: false,
   };
 }
 
@@ -316,6 +354,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
         feedback: null,
         feedbackWord: '',
         scorePop: null,
+        hiddenTargetFound: false,
       });
     } else {
       setState({
@@ -329,6 +368,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
         feedback: null,
         feedbackWord: '',
         scorePop: null,
+        hiddenTargetFound: false,
       });
       if (nextRound.clue) startTypewriter(nextRound.clue);
     }
@@ -366,6 +406,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
         lastRoundFound: s.foundWords.length,
         lastRoundType: roundsRef.current[s.roundIndex]?.type ?? null,
         lastRoundClue: roundsRef.current[s.roundIndex]?.clue ?? null,
+        lastRoundScrambleMode: roundsRef.current[s.roundIndex]?.scrambleMode,
       });
       setTimeout(() => { if (!gameEndedRef.current) advanceRound(); }, 2500);
       return;
@@ -405,28 +446,42 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
 
     const newTotalAttempts = s.totalAttempts + 1;
 
-    if (round.validWords.includes(word)) {
+    if (round.validWords.includes(word) || (round.hiddenTarget && word === round.hiddenTarget)) {
       const newCombo = s.combo + 1;
       // Scoring depends on round type
       const points = round.type === 'rule'
         ? 15 * newCombo
         : (ANAGRAM_WORD_SCORES[word.length] ?? 100) * newCombo;
 
+      // Hidden target bonus
+      const isHiddenTarget = round.hiddenTarget && word === round.hiddenTarget && !s.hiddenTargetFound;
+      const hiddenTargetBonus = isHiddenTarget ? 2000 : 0;
+
       const newFoundWords = [...s.foundWords, word];
-      const allFound = newFoundWords.length === round.validWords.length;
+      // For hidden target: the target word is NOT in validWords, so check allFound normally.
+      // When target is found, it's a bonus — doesn't affect "all found" progress.
+      const allFound = !isHiddenTarget && newFoundWords.length === round.validWords.length;
       const bonusPts = round.type === 'anagram' && allFound ? 500 : 0;
 
+      const totalPts = points + bonusPts + hiddenTargetBonus;
+      const popText = isHiddenTarget
+        ? `+${totalPts} TARGET FOUND!`
+        : allFound
+          ? `+${totalPts} All found!`
+          : `+${totalPts}`;
+
       setState({
-        foundWords: newFoundWords,
+        foundWords: isHiddenTarget ? s.foundWords : newFoundWords,
         combo: newCombo,
-        score: s.score + points + bonusPts,
+        score: s.score + totalPts,
         bestCombo: Math.max(s.bestCombo, newCombo),
         totalCorrect: s.totalCorrect + 1,
         totalAttempts: newTotalAttempts,
-        totalWordsFound: s.totalWordsFound + 1, // increment by 1 per word found
+        totalWordsFound: s.totalWordsFound + 1,
+        hiddenTargetFound: isHiddenTarget ? true : s.hiddenTargetFound,
         feedback: 'correct',
         feedbackWord: word,
-        scorePop: allFound ? `+${points + bonusPts} All found!` : `+${points}`,
+        scorePop: popText,
         scorePopKey: s.scorePopKey + 1,
         selectedIndices: [],
         wordKey: s.wordKey + 1,
@@ -448,6 +503,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
             lastRoundFound: cur.foundWords.length,
             lastRoundType: round.type,
             lastRoundClue: round.clue,
+            lastRoundScrambleMode: round.scrambleMode,
           });
           setTimeout(() => { if (!gameEndedRef.current) advanceRound(); }, 2500);
         }, 800);
@@ -509,6 +565,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
       lastRoundFound: s.foundWords.length,
       lastRoundType: roundsRef.current[s.roundIndex]?.type ?? null,
       lastRoundClue: roundsRef.current[s.roundIndex]?.clue ?? null,
+      lastRoundScrambleMode: roundsRef.current[s.roundIndex]?.scrambleMode,
     });
     setTimeout(() => { if (!gameEndedRef.current) advanceRound(); }, 2000);
   }, [setState, advanceRound, saveRoundWords]);
@@ -598,7 +655,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
           <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
             style={{ backgroundColor: pd.color + '20' }}>
             <span className="text-3xl">
-              {currentRound.type === 'rule' ? '\u{1F9E0}' : '\u{1F500}'}
+              {currentRound.type === 'rule' ? '🧠' : '🔀'}
             </span>
           </div>
           <h2 className="text-2xl font-extrabold text-[#333]">Phase {currentRound.phase + 1}: {pd.name}</h2>
@@ -618,16 +675,28 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
       <div className="min-h-[100dvh] flex flex-col items-center justify-center px-5"
         style={{ background: '#F9F9F9' }}>
         <div className="text-center phase-flash">
-          <div className="text-5xl mb-3">{state.lastRoundType === 'rule' ? '\u{1F9E0}' : '\u{1F500}'}</div>
+          <div className="text-5xl mb-3">
+            {state.lastRoundType === 'rule'
+              ? '🧠'
+              : state.lastRoundScrambleMode
+                ? MODE_INFO[state.lastRoundScrambleMode].icon
+                : '🔀'}
+          </div>
           <p className="text-xl font-extrabold text-[#333]">
             {state.lastRoundFound > 0 ? 'Round Complete!' : 'Round Skipped'}
           </p>
           <p className="text-base mt-1" style={{ color: '#999' }}>
             {state.lastRoundFound} word{state.lastRoundFound !== 1 ? 's' : ''} found
           </p>
+          {state.lastRoundScrambleMode && state.lastRoundScrambleMode !== 'classic' && (
+            <span className="inline-block mt-2 px-3 py-1 rounded-full text-xs font-bold text-white"
+              style={{ background: MODE_INFO[state.lastRoundScrambleMode].color }}>
+              {MODE_INFO[state.lastRoundScrambleMode].icon} {MODE_INFO[state.lastRoundScrambleMode].label}
+            </span>
+          )}
           {state.lastRoundClue && (
             <p className="text-sm mt-3 px-4 py-2 rounded-xl bg-white" style={{ color: '#666', border: '1.5px solid #E8E8E8' }}>
-              Rule: {state.lastRoundClue}
+              {state.lastRoundType === 'rule' ? 'Rule: ' : ''}{state.lastRoundClue}
             </p>
           )}
         </div>
@@ -658,13 +727,13 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
               else if (accuracy >= 50) stars = 1;
               return (
                 <span key={s} className="text-4xl" style={{ opacity: s <= stars ? 1 : 0.2 }}>
-                  {'\u2b50'}
+                  ⭐
                 </span>
               );
             })}
           </div>
           <div className="text-sm mb-4" style={{ color: '#999' }}>
-            {state.totalWordsFound} words found {'\u00b7'} Best Combo: {'\u00d7'}{state.bestCombo} {'\u00b7'} Accuracy: {accuracy}%
+            {state.totalWordsFound} words found · Best Combo: ×{state.bestCombo} · Accuracy: {accuracy}%
           </div>
           <button
             onClick={() => useGameStore.getState().setScreen('home')}
@@ -682,6 +751,10 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
   if (!currentRound) return null;
 
   const isRule = currentRound.type === 'rule';
+  // For anagram rounds, use the scramble mode color for tiles
+  const tileColor = !isRule && currentRound.scrambleMode
+    ? MODE_INFO[currentRound.scrambleMode].color
+    : phaseColor;
 
   return (
     <div className="flex flex-col items-center min-h-[100dvh] pb-24 pt-safe relative" style={{ background: '#F9F9F9' }}>
@@ -691,7 +764,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
         <button
           onClick={() => { if (timerRef.current) clearInterval(timerRef.current); gameEndedRef.current = true; useGameStore.getState().setScreen('home'); }}
           className="text-sm font-semibold flex items-center gap-1" style={{ color: '#333', background: 'none', border: 'none', cursor: 'pointer' }}>
-          {'\u2190'} Back
+          ← Back
         </button>
 
         <div className="flex flex-col items-center flex-1 mx-4">
@@ -707,8 +780,8 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
               DAILY
             </span>
           )}
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: phaseColor }}>
-            {isRule ? 'RULE' : 'ANAGRAM'}
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: isRule ? phaseColor : (currentRound.scrambleMode ? MODE_INFO[currentRound.scrambleMode].color : phaseColor) }}>
+            {isRule ? 'RULE' : currentRound.scrambleMode ? MODE_INFO[currentRound.scrambleMode].label.toUpperCase() : 'ANAGRAM'}
           </span>
           <span className="text-xs font-semibold" style={{ color: '#999' }}>
             {state.roundIndex + 1}/{totalRounds}
@@ -732,7 +805,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
         {state.combo >= 2 && (
           <div className="flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold"
             style={{ background: state.combo >= 5 ? '#FF9600' : '#58CC02', color: '#fff', animation: 'combo-pulse 0.5s ease' }}>
-            {state.combo >= 5 && <span>{'\u{1F525}'}</span>}
+            {state.combo >= 5 && <span>🔥</span>}
             x{state.combo}
           </div>
         )}
@@ -747,10 +820,45 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
         </div>
       )}
 
-      {/* ── Anagram hint ── */}
-      {!isRule && (
-        <div className="mb-3 px-4 py-2 rounded-xl text-center" style={{ background: '#fff', border: '1.5px solid #E8E8E8', maxWidth: 300 }}>
-          <span className="text-sm font-medium" style={{ color: '#999' }}>Tap letters to form any valid word</span>
+      {/* ── Scramble Mode Hint ── */}
+      {!isRule && currentRound.scrambleMode && (
+        <div className="mb-2 px-4 py-2 rounded-xl text-center" style={{ background: '#fff', border: `1.5px solid ${MODE_INFO[currentRound.scrambleMode].color}40`, maxWidth: 320 }}>
+          {currentRound.scrambleMode === 'classic' && (
+            <span className="text-sm font-medium" style={{ color: '#999' }}>Tap letters to form any valid word</span>
+          )}
+          {currentRound.scrambleMode === 'lengthLock' && (
+            <div className="flex items-center justify-center gap-2">
+              <span className="text-lg">📏</span>
+              <span className="text-sm font-bold" style={{ color: MODE_INFO.lengthLock.color }}>
+                Only {currentRound.lockedLength}-letter words!
+              </span>
+            </div>
+          )}
+          {currentRound.scrambleMode === 'hiddenTarget' && (
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🔍</span>
+                <span className="text-sm font-bold" style={{ color: MODE_INFO.hiddenTarget.color }}>
+                  {state.hiddenTargetFound ? 'Target Found!' : `Find the ${currentRound.hiddenTarget?.length}-letter word!`}
+                </span>
+              </div>
+              {!state.hiddenTargetFound && currentRound.hiddenTarget && (
+                <div className="flex gap-1.5 mt-1">
+                  {[...currentRound.hiddenTarget].map((_, i) => (
+                    <div key={i} className="w-5 h-6 rounded" style={{ background: '#E8E8E8' }} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {currentRound.scrambleMode === 'category' && (
+            <div className="flex items-center justify-center gap-2">
+              <span className="text-lg">📂</span>
+              <span className="text-sm font-bold" style={{ color: MODE_INFO.category.color }}>
+                {currentRound.categoryLabel}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -778,7 +886,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
                 color: isRule ? '#7B1FA2' : '#E08600',
                 border: `1px solid ${isRule ? '#CE93D8' : '#FFD699'}`,
               }}>
-                {'\u2713'} {w}
+                ✓ {w}
               </span>
             ))}
           </div>
@@ -837,8 +945,8 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
                 className="rounded-xl font-extrabold text-white flex items-center justify-center select-none transition-all duration-100 active:scale-90"
                 style={{
                   width: TILE_SIZE_ANAGRAM, height: TILE_SIZE_ANAGRAM, fontSize: 22,
-                  background: isSelected ? 'linear-gradient(180deg, #E08600, #CC7700)' : `linear-gradient(180deg, ${phaseColor}CC, ${phaseColor})`,
-                  boxShadow: isSelected ? `0 4px 12px ${phaseColor}50` : `0 3px 8px ${phaseColor}30`,
+                  background: isSelected ? 'linear-gradient(180deg, #E08600, #CC7700)' : `linear-gradient(180deg, ${tileColor}CC, ${tileColor})`,
+                  boxShadow: isSelected ? `0 4px 12px ${tileColor}50` : `0 3px 8px ${tileColor}30`,
                   transform: isSelected ? 'translateY(-4px) scale(1.05)' : 'none',
                 }}>
                 {letter.toUpperCase()}
@@ -872,12 +980,12 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
       <div className="mb-3" style={{ minHeight: 28, width: '100%', maxWidth: 300, textAlign: 'center' }}>
         {state.feedback === 'correct' && (
           <div key={`fb-c-${state.wordKey}`} className="text-base font-bold" style={{ color: '#58CC02', animation: 'slide-in-right 0.3s ease' }}>
-            {'\u2713'} Correct!
+            ✓ Correct!
           </div>
         )}
         {state.feedback === 'wrong' && (
           <div key={`fb-w-${state.shakeKey}`} className="text-base font-bold" style={{ color: '#FF3B30', animation: 'slide-in-right 0.3s ease' }}>
-            {'\u2717'} {isRule ? 'Not a match' : 'Not a word'}
+            ✗ {isRule ? 'Not a match' : currentRound.scrambleMode === 'lengthLock' ? `Not a ${currentRound.lockedLength}-letter word` : currentRound.scrambleMode === 'category' ? 'Not in category' : 'Not a word'}
           </div>
         )}
         {state.feedback === 'already' && (
@@ -916,7 +1024,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
         ) : (
           <button onClick={() => handlersRef.current?.onSkip()} className="px-5 py-3 rounded-xl text-base font-bold"
             style={{ background: '#F0F0F0', color: '#777', border: '2px solid #E0E0E0', borderBottom: '4px solid #D0D0D0', cursor: 'pointer' }}>
-            Skip {'\u2192'}
+            Skip →
           </button>
         )}
       </div>

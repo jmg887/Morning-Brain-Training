@@ -462,32 +462,36 @@ export function generateRules(count: number = 4, seed?: number): GeneratedRule[]
 
   const shuffledTemplates = seededShuffle(PATTERN_TEMPLATES, rng);
   const rules: GeneratedRule[] = [];
-  const usedCategories = new Set<string>();
   const usedDescriptions = new Set<string>();
+  let prefixSuffixUsed = 0; // track how many prefix/suffix rules are selected
 
-  // Pass 1: one per category (ensures variety)
-  for (const template of shuffledTemplates) {
+  // Priority groups: structure and semantic first, then others, prefix/suffix last
+  const priority = (cat: string): number => {
+    if (cat === 'structure') return 0;
+    if (cat === 'semantic') return 1;
+    if (cat === 'containing') return 2;
+    if (cat === 'length') return 3;
+    return 4; // 'starting', 'ending' — lowest priority
+  };
+
+  // Sort templates by priority (stable sort preserves seeded shuffle within same priority)
+  const prioritized = [...shuffledTemplates].sort(
+    (a, b) => priority(a.category) - priority(b.category)
+  );
+
+  for (const template of prioritized) {
     if (rules.length >= count) break;
-    if (usedCategories.has(template.category) && usedCategories.size >= 3) continue;
     if (usedDescriptions.has(template.description)) continue;
+
+    // Allow at most 1 prefix/suffix rule total
+    const isPrefixSuffix = template.category === 'starting' || template.category === 'ending';
+    if (isPrefixSuffix && prefixSuffixUsed >= 1) continue;
 
     const rule = generateRuleFromTemplate(template, rng);
     if (rule) {
       rules.push(rule);
-      usedCategories.add(rule.category);
       usedDescriptions.add(rule.description);
-    }
-  }
-
-  // Pass 2: fill remaining (allow same category, different description)
-  for (const template of shuffledTemplates) {
-    if (rules.length >= count) break;
-    if (usedDescriptions.has(template.description)) continue;
-
-    const rule = generateRuleFromTemplate(template, rng);
-    if (rule) {
-      rules.push(rule);
-      usedDescriptions.add(rule.description);
+      if (isPrefixSuffix) prefixSuffixUsed++;
     }
   }
 

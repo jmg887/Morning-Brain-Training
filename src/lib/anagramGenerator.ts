@@ -21,13 +21,13 @@ export interface AnagramPuzzle {
 
 // ─── Letter frequency score — prefer common English letters ──────────────────
 
-const LETTER_FREQ: Record<string, number> = {
+export const LETTER_FREQ: Record<string, number> = {
   e: 13, t: 9, a: 8, o: 8, i: 7, n: 7, s: 6, h: 6, r: 6,
   d: 4, l: 4, c: 3, u: 3, m: 3, w: 2, f: 2, g: 2, y: 2,
   p: 2, b: 2, v: 1, k: 1, j: 0.5, x: 0.5, q: 0.3, z: 0.3,
 };
 
-function letterQuality(word: string): number {
+export function letterQuality(word: string): number {
   let score = 0;
   for (const ch of word) score += LETTER_FREQ[ch] ?? 0;
   return score / word.length;
@@ -38,7 +38,7 @@ function letterQuality(word: string): number {
 
 // ─── Find all sub-anagrams using length-indexed arrays + early pruning ────────
 
-function findSubAnagrams(letters: string[], maxLen: number): string[] {
+export function findSubAnagrams(letters: string[], maxLen: number): string[] {
   const results: string[] = [];
   const letterSet = new Set(letters);
   const uniqueLetters = letterSet.size;
@@ -65,7 +65,7 @@ function findSubAnagrams(letters: string[], maxLen: number): string[] {
 
 // ─── Generate a single puzzle from a base word ──────────────────────────────
 
-function generatePuzzleFromBase(
+export function generatePuzzleFromBase(
   baseWord: string,
   rng: () => number
 ): AnagramPuzzle | null {
@@ -96,7 +96,7 @@ function generatePuzzleFromBase(
 }
 
 // ─── Profanity / quality blocklist for base words ─────────────────────────────
-const BLOCKED_BASE_WORDS = new Set([
+export const BLOCKED_BASE_WORDS = new Set([
   // profanity & slurs
   'bitch', 'damn', 'shit', 'piss', 'crap', 'slut', 'whore', 'dick',
   'cock', 'fuck', 'cunt', 'ass', 'arse', 'bastard', 'bollock', 'boob',
