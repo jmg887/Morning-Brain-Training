@@ -61,3 +61,25 @@ Stage Summary:
 - Generator: ~60ms, 100% reliability across 20 seeds tested
 - Scoring: 3-letter=100pts, 4=250, 5=500, 6=1000, 7=2000, combo multiplier
 - Stars: 3★ >=55%, 2★ >=35%, 1★ >=18% of total findable words
+---
+Task ID: 1
+Agent: main
+Task: Build 4 rotating scramble modes for WordFusion Letter Scramble phase + fix unicode bug + fix lazy word rules
+
+Work Log:
+- Read and analyzed all source files (WordFusion.tsx 944 lines, anagramGenerator.ts, wordRuleGenerator.ts, dictionary.ts, seededRandom.ts, page.tsx)
+- Ran data analysis on 57,472-word dictionary to validate mode feasibility (category matches, length lock word counts, hidden target sub-anagram counts)
+- Fixed all unicode escape sequences in WordFusion.tsx (\u2713→✓, \u2717→✗, \u2b50→⭐, \u2190→←, \u2192→→, \u00b7→·, \u00d7→×, emoji escapes→actual emoji)
+- Overhauled wordRuleGenerator.ts selection: priority-sorted categories (structure>semantic>containing>length>prefix/suffix), max 1 prefix/suffix rule per generation
+- Exported findSubAnagrams, generatePuzzleFromBase, letterQuality, BLOCKED_BASE_WORDS from anagramGenerator.ts
+- Created new scrambleModes.ts (~395 lines) with 4 modes: Classic, Length Lock, Hidden Target, Category Filter
+- Category mode: 12 categories with keyword-based matching, filters sub-anagrams by category
+- Length Lock: locks to 4 or 5 letter words only
+- Hidden Target: 7-letter target word removed from validWords, 2000pt bonus for finding it
+- Updated WordFusion.tsx: FusionRound interface extended with mode fields, generateFusionRounds uses scramble modes, mode-specific UI (colored tiles, hint badges, hidden target blanks, category labels, mode-aware feedback)
+- Quality testing across 12 days confirmed all 36/36 puzzles generate successfully
+
+Stage Summary:
+- 4 files changed, 570 insertions, 64 deletions
+- Pushed to GitHub as commit e45da2d
+- Known iteration item: some hidden target words are obscure (e.g. tattied, wetched) — need curated blocklist or frequency data
