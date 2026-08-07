@@ -5,8 +5,7 @@ import { useGameStore } from '@/store/useGameStore';
 import { generateRules } from '@/lib/wordRuleGenerator';
 import { generateScramblePuzzles, MODE_INFO } from '@/lib/scrambleModes';
 import type { ScrambleMode, ScramblePuzzle } from '@/lib/scrambleModes';
-import { dateToSeed, getTodaySeedStr } from '@/lib/seededRandom';
-import type { GeneratedRule } from '@/lib/wordRuleGenerator';
+import { dateToSeed, getTodaySeedStr, createSeededRandom } from '@/lib/seededRandom';
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -26,6 +25,8 @@ interface FusionRound {
   hiddenTarget?: string;
   categoryLabel?: string;
   lockedLength?: number;
+  // Example word to help the player get started
+  exampleWord?: string;
 }
 
 interface PhaseDef {
@@ -61,6 +62,8 @@ interface PlayState {
   lastRoundClue: string | null;
   lastRoundScrambleMode?: ScrambleMode;
   hiddenTargetFound: boolean;
+  // Track missed words per round for end-of-session display
+  missedWordsPerRound: { roundIdx: number; clue: string | null; missed: string[]; type: RoundType; scrambleMode?: ScrambleMode; hiddenTarget?: string; hiddenTargetFound: boolean }[];
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
@@ -91,12 +94,27 @@ function shuffleArray<T>(array: T[]): T[] {
 function generateFusionRounds(seed?: number): FusionRound[] {
   const ruleSeed = seed !== undefined ? seed : undefined;
   const anagramSeed = seed !== undefined ? seed + 1000 : undefined;
+  // RNG for example word selection
+  const exampleRng = seed !== undefined ? createSeededRandom(seed + 5000) : () => Math.random();
 
   const ruleRounds = generateRules(3, ruleSeed);
   // Generate 3 scramble puzzles with rotating modes
   const scramblePuzzles = generateScramblePuzzles(3, anagramSeed ?? Date.now());
 
   const rounds: FusionRound[] = [];
+
+  // Helper: pick an example word for the round (for player priming)
+  const pickExampleWord = (round: FusionRound, rng: () => number): string | undefined => {
+    if (round.type === 'rule') return round.validWords[Math.floor(rng() * round.validWords.length)];
+    if (round.type === 'anagram') {
+      if (round.scrambleMode === 'classic' || round.scrambleMode === 'category') {
+        return round.validWords[Math.floor(rng() * round.validWords.length)];
+      }
+      // Hidden Target and Length Lock: no example
+      return undefined;
+    }
+    return undefined;
+  };
 
   // Helper: build mode-specific hint text
   const getScrambleHint = (p: ScramblePuzzle): string => {
@@ -118,7 +136,7 @@ function generateFusionRounds(seed?: number): FusionRound[] {
   // Phase 0: 2 rule rounds
   for (let i = 0; i < 2 && i < ruleRounds.length; i++) {
     const r = ruleRounds[i];
-    rounds.push({
+    const round: FusionRound = {
       type: 'rule',
       letters: r.letters,
       shuffledLetters: shuffleArray(r.letters),
@@ -126,13 +144,15 @@ function generateFusionRounds(seed?: number): FusionRound[] {
       validWords: r.validWords,
       roundTime: PHASES[0].roundTime,
       phase: 0,
-    });
+    };
+    round.exampleWord = pickExampleWord(round, exampleRng);
+    rounds.push(round);
   }
 
   // Phase 1: 2 scramble rounds (modes rotate)
   for (let i = 0; i < 2 && i < scramblePuzzles.length; i++) {
     const p = scramblePuzzles[i];
-    rounds.push({
+    const round: FusionRound = {
       type: 'anagram',
       letters: p.letters,
       shuffledLetters: [...p.letters],
@@ -145,13 +165,15 @@ function generateFusionRounds(seed?: number): FusionRound[] {
       hiddenTarget: p.hiddenTarget,
       categoryLabel: p.categoryLabel,
       lockedLength: p.lockedLength,
-    });
+    };
+    round.exampleWord = pickExampleWord(round, exampleRng);
+    rounds.push(round);
   }
 
   // Phase 2: 1 rule + 1 scramble (if available)
   if (ruleRounds.length > 2) {
     const ruleR = ruleRounds[2];
-    rounds.push({
+    const round: FusionRound = {
       type: 'rule',
       letters: ruleR.letters,
       shuffledLetters: shuffleArray(ruleR.letters),
@@ -159,11 +181,13 @@ function generateFusionRounds(seed?: number): FusionRound[] {
       validWords: ruleR.validWords,
       roundTime: PHASES[2].roundTime,
       phase: 2,
-    });
+    };
+    round.exampleWord = pickExampleWord(round, exampleRng);
+    rounds.push(round);
   }
   if (scramblePuzzles.length > 2) {
     const p = scramblePuzzles[2];
-    rounds.push({
+    const round: FusionRound = {
       type: 'anagram',
       letters: p.letters,
       shuffledLetters: [...p.letters],
@@ -176,7 +200,9 @@ function generateFusionRounds(seed?: number): FusionRound[] {
       hiddenTarget: p.hiddenTarget,
       categoryLabel: p.categoryLabel,
       lockedLength: p.lockedLength,
-    });
+    };
+    round.exampleWord = pickExampleWord(round, exampleRng);
+    rounds.push(round);
   }
 
   return rounds;
@@ -211,6 +237,7 @@ function createInitialState(): PlayState {
     lastRoundClue: null,
     lastRoundScrambleMode: undefined,
     hiddenTargetFound: false,
+    missedWordsPerRound: [],
   };
 }
 
@@ -322,11 +349,33 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
     }
   }, [state.phase, completeSession]);
 
-  // ─── Save Round Words (helper — does NOT add to totalWordsFound) ────────────
+  // ─── Save Round Words + Track Missed Words (helper) ────────────────────
 
   const saveRoundWords = useCallback((s: PlayState): Partial<PlayState> => {
+    const round = roundsRef.current[s.roundIndex];
+    const missed: string[] = [];
+    if (round) {
+      // For anagram rounds: missed = validWords not found
+      // For rule rounds: missed = validWords not found
+      const foundSet = new Set(s.foundWords);
+      for (const w of round.validWords) {
+        if (!foundSet.has(w)) missed.push(w);
+      }
+    }
     return {
       wordsPerRound: [...s.wordsPerRound, s.foundWords.length],
+      missedWordsPerRound: [
+        ...s.missedWordsPerRound,
+        {
+          roundIdx: s.roundIndex,
+          clue: round?.clue ?? null,
+          missed,
+          type: round?.type ?? 'rule',
+          scrambleMode: round?.scrambleMode,
+          hiddenTarget: round?.hiddenTarget,
+          hiddenTargetFound: s.hiddenTargetFound,
+        },
+      ],
       foundWords: [],
       selectedIndices: [],
     };
@@ -708,39 +757,110 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
 
   if (state.phase === 'ended') {
     const accuracy = state.totalAttempts > 0 ? Math.round((state.totalCorrect / state.totalAttempts) * 100) : 0;
+    // Collect all missed words across rounds (for anagram rounds, cap at 15 per round)
+    const allMissed = state.missedWordsPerRound.flatMap(r => {
+      if (r.type === 'rule') {
+        // For rule rounds, show up to 12 sample missed words
+        return r.missed.slice(0, 12).map(w => ({ word: w, roundType: r.type, clue: r.clue, scrambleMode: r.scrambleMode }));
+      }
+      // For anagram rounds, show all missed (already capped by validWords size)
+      return r.missed.map(w => ({ word: w, roundType: r.type, clue: r.clue, scrambleMode: r.scrambleMode }));
+    });
+    // Deduplicate
+    const uniqueMissed = [...new Map(allMissed.map(m => [m.word, m])).values()];
+    // Hidden targets that were never found
+    const unrevealedTargets = state.missedWordsPerRound
+      .filter(r => r.hiddenTarget && !r.hiddenTargetFound)
+      .map(r => r.hiddenTarget!);
+    // Sort missed words by length (longest first) for discovery feel
+    uniqueMissed.sort((a, b) => b.word.length - a.word.length);
+
     return (
-      <div className="min-h-[100dvh] flex items-center justify-center px-5"
+      <div className="min-h-[100dvh] flex items-start justify-center px-5 pt-10 pb-24"
         style={{ background: '#F9F9F9' }}>
-        <div className="text-center p-6 rounded-2xl mx-4"
-          style={{ background: '#fff', maxWidth: 320, width: '100%', animation: 'slide-up 0.4s ease' }}>
-          <div className="text-2xl font-black mb-1" style={{ color: '#333' }}>
-            {state.globalTime <= 0 ? "Time's Up!" : 'Great Job!'}
+        <div className="w-full rounded-2xl mx-4"
+          style={{ background: '#fff', maxWidth: 380, animation: 'slide-up 0.4s ease' }}>
+          {/* Score header */}
+          <div className="text-center p-6 pb-4">
+            <div className="text-2xl font-black mb-1" style={{ color: '#333' }}>
+              {state.globalTime <= 0 ? "Time's Up!" : 'Great Job!'}
+            </div>
+            <div className="text-lg font-bold mb-4" style={{ color: '#58CC02' }}>
+              Score: {state.score}
+            </div>
+            <div className="flex justify-center gap-2 mb-4">
+              {[1, 2, 3].map((s) => {
+                let stars = 0;
+                if (accuracy >= 90) stars = 3;
+                else if (accuracy >= 70) stars = 2;
+                else if (accuracy >= 50) stars = 1;
+                return (
+                  <span key={s} className="text-4xl" style={{ opacity: s <= stars ? 1 : 0.2 }}>
+                    {'\u2b50'}
+                  </span>
+                );
+              })}
+            </div>
+            <div className="text-sm" style={{ color: '#999' }}>
+              {state.totalWordsFound} words found · Best Combo: {String.fromCharCode(215)}{state.bestCombo} · Accuracy: {accuracy}%
+            </div>
           </div>
-          <div className="text-lg font-bold mb-4" style={{ color: '#58CC02' }}>
-            Score: {state.score}
+
+          {/* Unrevealed hidden targets */}
+          {unrevealedTargets.length > 0 && (
+            <div className="px-5 pb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span>🔍</span>
+                <span className="text-sm font-bold" style={{ color: '#FF2D55' }}>Hidden Target{unrevealedTargets.length > 1 ? 's' : ''}</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {unrevealedTargets.map(w => (
+                  <span key={w} className="px-3 py-1.5 rounded-full text-sm font-bold" style={{
+                    background: '#FFF0F3',
+                    color: '#FF2D55',
+                    border: '1px solid #FFD0DA',
+                  }}>
+                    {w.toUpperCase()}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Missed words section */}
+          {uniqueMissed.length > 0 && (
+            <div className="px-5 pb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span>💡</span>
+                <span className="text-sm font-bold" style={{ color: '#333' }}>More to Explore</span>
+                <span className="text-xs" style={{ color: '#BBB' }}>({uniqueMissed.length} word{uniqueMissed.length > 1 ? 's' : ''})</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
+                {uniqueMissed.map(m => {
+                  const isAnagram = m.roundType === 'anagram';
+                  return (
+                    <span key={m.word} className="px-2.5 py-1 rounded-full text-xs font-semibold" style={{
+                      background: isAnagram ? '#FFF5E6' : '#F3E5F5',
+                      color: isAnagram ? '#E08600' : '#7B1FA2',
+                      border: `1px solid ${isAnagram ? '#FFD699' : '#CE93D8'}`,
+                    }}>
+                      {m.word}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Done button */}
+          <div className="p-5 pt-3">
+            <button
+              onClick={() => useGameStore.getState().setScreen('home')}
+              className="w-full py-3 rounded-xl text-base font-bold"
+              style={{ background: 'linear-gradient(135deg, #58CC02, #58A700)', color: '#fff', border: 'none', cursor: 'pointer' }}>
+              Done
+            </button>
           </div>
-          <div className="flex justify-center gap-2 mb-4">
-            {[1, 2, 3].map((s) => {
-              let stars = 0;
-              if (accuracy >= 90) stars = 3;
-              else if (accuracy >= 70) stars = 2;
-              else if (accuracy >= 50) stars = 1;
-              return (
-                <span key={s} className="text-4xl" style={{ opacity: s <= stars ? 1 : 0.2 }}>
-                  ⭐
-                </span>
-              );
-            })}
-          </div>
-          <div className="text-sm mb-4" style={{ color: '#999' }}>
-            {state.totalWordsFound} words found · Best Combo: ×{state.bestCombo} · Accuracy: {accuracy}%
-          </div>
-          <button
-            onClick={() => useGameStore.getState().setScreen('home')}
-            className="w-full py-3 rounded-xl text-base font-bold"
-            style={{ background: 'linear-gradient(135deg, #58CC02, #58A700)', color: '#fff', border: 'none', cursor: 'pointer' }}>
-            Done
-          </button>
         </div>
       </div>
     );
@@ -859,6 +979,14 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
               </span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Example Word ── */}
+      {currentRound.exampleWord && !state.foundWords.includes(currentRound.exampleWord) && (
+        <div className="mb-2 flex items-center justify-center gap-1.5">
+          <span className="text-xs" style={{ color: '#BBB' }}>e.g.</span>
+          <span className="text-sm font-medium italic" style={{ color: '#AAA' }}>{currentRound.exampleWord}</span>
         </div>
       )}
 
