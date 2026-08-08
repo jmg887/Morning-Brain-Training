@@ -398,8 +398,23 @@ function findOptimalLetters(
     ? selectedWords.slice(0, targetCount)
     : selectedWords;
 
+  // Re-scan ALL candidates against the final letter set.
+  // The greedy selection above may have skipped valid words due to
+  // shuffle order / tile budget, even though the final letters can form them.
+  // Every word the player *could* spell from the tiles and that matches
+  // the rule MUST be accepted — otherwise they get a false "wrong".
   const finalLetters = collectLettersWithCount(finalWords);
-  return { letters: finalLetters, validWords: finalWords.sort() };
+  const letterSet = new Set(finalLetters);
+  const expandedValid = new Set(finalWords);
+  for (const w of candidates) {
+    if (expandedValid.has(w)) continue;
+    // Quick check: every letter in the word must exist in the tile pool
+    if (![...w].every(ch => letterSet.has(ch))) continue;
+    if (canFormWord(w, finalLetters)) {
+      expandedValid.add(w);
+    }
+  }
+  return { letters: finalLetters, validWords: [...expandedValid].sort() };
 }
 
 function buildLetterArray(counts: Map<string, number>, exclude?: string): string[] {
