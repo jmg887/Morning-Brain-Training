@@ -7,6 +7,7 @@ import MathSprint from '@/components/games/MathSprint';
 import CircuitConnect from '@/components/games/CircuitConnect';
 import WordFusion from '@/components/games/WordFusion';
 import OddOneOut from '@/components/games/OddOneOut';
+import PipeFlow from '@/components/games/PipeFlow';
 import ScoreScreen from '@/components/ScoreScreen';
 import BottomNav from '@/components/BottomNav';
 
@@ -22,6 +23,7 @@ export default function Page() {
       {currentScreen === 'circuit' && <CircuitConnect />}
       {currentScreen === 'word' && <WordFusion />}
       {currentScreen === 'oddone' && <OddOneOut />}
+      {currentScreen === 'pipe' && <PipeFlow />}
       {currentScreen === 'score' && <ScoreScreen />}
       <BottomNav />
     </div>

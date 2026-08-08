@@ -71,6 +71,19 @@ const exercises = [
       </svg>
     ),
   },
+  {
+    id: 'pipe' as GameType,
+    name: 'Pipe Flow',
+    desc: 'Rotate pipes to connect source to drain',
+    color: '#FF9600',
+    bgColor: '#FFF5E6',
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#FF9600" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2v20"/><path d="M2 12h20"/>
+        <circle cx="12" cy="12" r="3" fill="none" stroke="#FF9600" strokeWidth="2"/>
+      </svg>
+    ),
+  },
 ];
 
 export default function HomeScreen() {
@@ -169,7 +182,7 @@ export default function HomeScreen() {
       <div className="px-5 mt-5">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-[15px] font-bold text-[#333]">Today&apos;s Progress</h2>
-          <span className="text-[13px] text-[#999] font-medium">{dailyProgress} of 5 completed</span>
+          <span className="text-[13px] text-[#999] font-medium">{dailyProgress} of 6 completed</span>
         </div>
         <div className="flex gap-2">
           {exercises.map((ex, i) => (
@@ -229,7 +242,7 @@ function ExerciseCard({ exercise }: { exercise: typeof exercises[0] }) {
 
 function StartSessionButton({ checkAndUpdateStreak }: { checkAndUpdateStreak: () => void }) {
   const { dailyProgress, setScreen, gamesCompleted } = useGameStore();
-  const nextGame = ['memory', 'word', 'math', 'circuit', 'oddone'].find((g) => !gamesCompleted.includes(g as GameType));
+  const nextGame = ['memory', 'word', 'math', 'circuit', 'oddone', 'pipe'].find((g) => !gamesCompleted.includes(g as GameType));
 
   const handleStart = () => {
     checkAndUpdateStreak();
@@ -238,11 +251,11 @@ function StartSessionButton({ checkAndUpdateStreak }: { checkAndUpdateStreak: ()
 
   return (
     <>
-    <button onClick={handleStart} className="btn-duolingo w-full text-[16px] mt-1" disabled={dailyProgress >= 5}>
-      {dailyProgress >= 5 ? 'All Done for Today!' : dailyProgress === 0 ? "Start Today's Session" : 'Continue Training'}
+    <button onClick={handleStart} className="btn-duolingo w-full text-[16px] mt-1" disabled={dailyProgress >= 6}>
+      {dailyProgress >= 6 ? 'All Done for Today!' : dailyProgress === 0 ? "Start Today's Session" : 'Continue Training'}
     </button>
-    {dailyProgress >= 5 && (
-      <p className="text-center text-[12px] text-[#999] mt-1">All 5 exercises completed</p>
+    {dailyProgress >= 6 && (
+      <p className="text-center text-[12px] text-[#999] mt-1">All 6 exercises completed</p>
     )}
     </>
   );
