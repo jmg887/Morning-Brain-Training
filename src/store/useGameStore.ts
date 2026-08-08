@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type Screen = 'home' | 'memory' | 'word' | 'math' | 'circuit' | 'oddone' | 'pipe' | 'daily' | 'score' | 'word_picker';
+export type PipeMode = 'classic' | 'flow';
+export type Screen = 'home' | 'memory' | 'word' | 'math' | 'circuit' | 'oddone' | 'pipe' | 'pipe_picker' | 'daily' | 'score' | 'word_picker';
 export type GameType = 'memory' | 'word' | 'math' | 'circuit' | 'oddone' | 'pipe';
 export type GameDifficulty = 'beginner' | 'intermediate' | 'pro';
 export type DifficultyCapableGame = Extract<GameType, 'word'>; // games that support difficulty
@@ -41,6 +42,9 @@ interface GameState {
   wordDifficulty: GameDifficulty;
   setGameDifficulty: (game: DifficultyCapableGame, difficulty: GameDifficulty) => void;
   getGameDifficulty: (game: DifficultyCapableGame) => GameDifficulty;
+  // Per-game mode settings
+  pipeMode: PipeMode;
+  setPipeMode: (mode: PipeMode) => void;
   advanceCircuitLevel: (stars: number) => number;
   completeSession: (results: SessionResults) => void;
   resetSession: () => void;
@@ -80,6 +84,7 @@ export const useGameStore = create<GameState>()(
       circuitLevel: 1,
       circuitHistory: [],
       wordDifficulty: 'intermediate' as GameDifficulty,
+      pipeMode: 'classic' as PipeMode,
 
       setGameDifficulty: (game, difficulty) => {
         if (game === 'word') set({ wordDifficulty: difficulty });
@@ -88,6 +93,7 @@ export const useGameStore = create<GameState>()(
         if (game === 'word') return get().wordDifficulty;
         return 'intermediate';
       },
+      setPipeMode: (mode) => set({ pipeMode: mode }),
 
       completeSession: (results) => {
         const state = get();
@@ -204,6 +210,7 @@ export const useGameStore = create<GameState>()(
         circuitLevel: state.circuitLevel,
         circuitHistory: state.circuitHistory,
         wordDifficulty: state.wordDifficulty,
+        pipeMode: state.pipeMode,
       }),
     }
   )

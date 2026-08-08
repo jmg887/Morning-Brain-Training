@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useGameStore, type GameType, type Screen, type GameDifficulty } from '@/store/useGameStore';
+import { useGameStore, type GameType, type Screen, type GameDifficulty, type PipeMode } from '@/store/useGameStore';
 import { getDayNumber } from '@/lib/seededRandom';
 
 const exercises = [
@@ -210,13 +210,16 @@ export default function HomeScreen() {
 }
 
 function ExerciseCard({ exercise }: { exercise: typeof exercises[0] }) {
-  const { setScreen, gamesCompleted, wordDifficulty } = useGameStore();
+  const { setScreen, gamesCompleted, wordDifficulty, pipeMode } = useGameStore();
   const isDone = gamesCompleted.includes(exercise.id);
 
   // Word Fusion has a difficulty picker pre-screen
+  // Pipe Flow has a mode picker pre-screen
   const handleClick = () => {
     if (exercise.id === 'word') {
       setScreen('word_picker' as Screen);
+    } else if (exercise.id === 'pipe') {
+      setScreen('pipe_picker' as Screen);
     } else {
       setScreen(exercise.id);
     }
@@ -228,7 +231,12 @@ function ExerciseCard({ exercise }: { exercise: typeof exercises[0] }) {
     intermediate: { label: 'Mid', color: '#FF9600', bg: '#FFF5E6' },
     pro: { label: 'Pro', color: '#FF3B30', bg: '#FFE8E5' },
   };
-  const badge = exercise.id === 'word' ? DIFFICULTY_BADGE[wordDifficulty] : null;
+  const PIPE_MODE_BADGE: Record<PipeMode, { label: string; color: string; bg: string }> = {
+    classic: { label: 'Classic', color: '#FF9600', bg: '#FFF5E6' },
+    flow: { label: 'Flow', color: '#1CB0F6', bg: '#E8F6FF' },
+  };
+  const badge = exercise.id === 'word' ? DIFFICULTY_BADGE[wordDifficulty]
+    : exercise.id === 'pipe' ? PIPE_MODE_BADGE[pipeMode] : null;
 
   return (
     <button

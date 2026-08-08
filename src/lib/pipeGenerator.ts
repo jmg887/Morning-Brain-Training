@@ -338,6 +338,114 @@ export function isPuzzleSolved(puzzle: PipePuzzle): boolean {
   return flow.has(`${puzzle.drainRow},${puzzle.drainCol}`);
 }
 
+// ─── Flow Mode: Ordered Path Tracer ──────────────────────────────────────
+
+export interface FlowStep {
+  row: number;
+  col: number;
+  /** Direction the flow entered this cell from (null for source) */
+  entryDir: Direction | null;
+  /** Direction the flow exits this cell toward (null if dead end or drain exit) */
+  exitDir: Direction | null;
+  /** The outgoing direction that would continue the flow */
+  nextDir: Direction | null;
+  /** Whether the flow reached the drain at this step */
+  reachedDrain: boolean;
+  /** Whether this is a dead end (flow can't continue) */
+  isDeadEnd: boolean;
+}
+
+/**
+ * Trace the flow path step-by-step from the source.
+ * Returns ordered steps the liquid follows through connected pipes.
+ * Stops at the drain, at a dead end, or at maxSteps.
+ * Re-tracing after each pipe rotation lets Flow mode animate liquid advancing.
+ */
+export function traceFlowPath(puzzle: PipePuzzle, maxSteps: number = 50): FlowStep[] {
+  const { grid, sourceRow, sourceCol, drainRow, drainCol } = puzzle;
+  const size = puzzle.gridSize;
+  const steps: FlowStep[] = [];
+  const visited = new Set<string>();
+
+  let curRow = sourceRow;
+  let curCol = sourceCol;
+  let entryDir: Direction | null = null; // source is entered from "outside left"
+
+  for (let i = 0; i < maxSteps; i++) {
+    const key = `${curRow},${curCol}`;
+    if (visited.has(key)) break; // loop detected
+    visited.add(key);
+
+    const cell = grid[curRow][curCol];
+    const conns = getConnections(cell.type, cell.rotation);
+
+    const isDrain = curRow === drainRow && curCol === drainCol;
+    const isSource = curRow === sourceRow && curCol === sourceCol;
+
+    // Determine exit: the flow came from entryDir, so it exits through another connection
+    // Special: source enters from 'left' (outside grid)
+    const effectiveEntry: Direction = isSource ? 'left' : (entryDir as Direction);
+    const exitDirs: Direction[] = conns.filter((d: Direction) => d !== effectiveEntry);
+
+    // For drain: if connected, flow exits to 'right' (outside grid)
+    let exitDir: Direction | null = null;
+    let nextDir: Direction | null = null;
+    let reachedDrain = false;
+    let isDeadEnd = false;
+
+    if (isDrain && conns.includes('right')) {
+      // Flow exits the drain to the right — success!
+      exitDir = 'right';
+      nextDir = null;
+      reachedDrain = true;
+    } else if (exitDirs.length > 0) {
+      // Pick the first available exit (in a real pipe there's only one meaningful exit
+      // that isn't where we came from — but tees/crosses have multiple)
+      // For flow mode, we follow the first connection that has a matching neighbor
+      let foundNext = false;
+      for (const dir of exitDirs) {
+        const [dr, dc] = DR[dir];
+        const nr = curRow + dr;
+        const nc = curCol + dc;
+        if (nr >= 0 && nr < size && nc >= 0 && nc < size) {
+          const neighbor = grid[nr][nc];
+          const neighborConns = getConnections(neighbor.type, neighbor.rotation);
+          if (neighborConns.includes(OPPOSITE[dir])) {
+            exitDir = dir;
+            nextDir = dir;
+            foundNext = true;
+            break;
+          }
+        }
+      }
+      if (!foundNext) {
+        isDeadEnd = true;
+      }
+    } else {
+      isDeadEnd = true;
+    }
+
+    steps.push({
+      row: curRow, col: curCol, entryDir, exitDir, nextDir,
+      reachedDrain, isDeadEnd,
+    });
+
+    if (reachedDrain || isDeadEnd) break;
+
+    // Advance to next cell
+    if (nextDir) {
+      const [dr, dc] = DR[nextDir];
+      entryDir = OPPOSITE[nextDir];
+      curRow += dr;
+      curCol += dc;
+    } else {
+      break;
+    }
+  }
+
+  return steps;
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 const ROUND_CONFIGS = [

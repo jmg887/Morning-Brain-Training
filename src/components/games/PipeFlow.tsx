@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useGameStore } from '@/store/useGameStore';
-import { generatePipeSession, computeWaterFlow, isPuzzleSolved, getConnections, type PipeRound, type PipePuzzle, type Direction } from '@/lib/pipeGenerator';
+import { useGameStore, type PipeMode } from '@/store/useGameStore';
+import { generatePipeSession, computeWaterFlow, isPuzzleSolved, getConnections, traceFlowPath, type PipeRound, type PipePuzzle, type Direction } from '@/lib/pipeGenerator';
 import { dateToSeed, getTodaySeedStr } from '@/lib/seededRandom';
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
@@ -17,7 +17,9 @@ const PIPE_FILLED = '#1CB0F6';
 const SOURCE_COLOR = '#58CC02';
 const DRAIN_COLOR = '#FF3B30';
 const GLOBAL_TIME = 240;
-const FEEDBACK_CLEAR_DELAY = 1500;
+const FLOW_TICK_MS = 1200; // liquid advances one pipe every 1.2s
+const FLOW_PAUSE_MS = 2000; // pause after losing a life
+const MAX_LIVES = 3;
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -29,17 +31,23 @@ interface PlayState {
   score: number;
   moves: number;
   totalMoves: number;
-  totalCorrect: number; // rounds completed
+  totalCorrect: number;
   totalRounds: number;
-  bestTime: number; // fastest round completion
+  bestTime: number;
   roundsCompleted: number;
   roundTimes: number[];
   combo: number;
   bestCombo: number;
-  feedback: 'solved' | 'timeout' | null;
+  feedback: 'solved' | 'timeout' | 'dead_end' | null;
   lastRoundMoves: number;
   lastRoundTime: number;
   lastRoundSolved: boolean;
+  // Flow mode state
+  flowFilledCells: Set<string>; // cells the liquid has passed through
+  lives: number;
+  flowPaused: boolean; // paused after dead end hit
+  flowDeadEndKey: number; // for triggering shake animation
+  flowStep: number; // tracked in state for reactivity
 }
 
 // ─── Round Generation ───────────────────────────────────────────────────────────
@@ -53,12 +61,12 @@ function createRounds(seed?: number): PipeRound[] {
 
 // ─── Initial State ──────────────────────────────────────────────────────────────
 
-function createInitialState(): PlayState {
+function createInitialState(isFlow: boolean): PlayState {
   return {
     phase: 'round_intro',
     roundIndex: 0,
     globalTime: GLOBAL_TIME,
-    roundTime: 60,
+    roundTime: isFlow ? 999 : 60, // flow mode: no per-round timer
     score: 0,
     moves: 0,
     totalMoves: 0,
@@ -73,13 +81,18 @@ function createInitialState(): PlayState {
     lastRoundMoves: 0,
     lastRoundTime: 0,
     lastRoundSolved: false,
+    flowFilledCells: new Set(),
+    lives: MAX_LIVES,
+    flowPaused: false,
+    flowDeadEndKey: 0,
+    flowStep: 0,
   };
 }
 
 // ─── Pipe Rendering Component ──────────────────────────────────────────────────
 
 interface PipeCellProps {
- type: string;
+  type: string;
   rotation: number;
   size: number;
   isFilled: boolean;
@@ -125,14 +138,7 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         {/* Pipe segments */}
         {segments.map((d, i) => (
-          <path
-            key={i}
-            d={d}
-            stroke={color}
-            strokeWidth={thickness}
-            strokeLinecap="round"
-            fill="none"
-          />
+          <path key={i} d={d} stroke={color} strokeWidth={thickness} strokeLinecap="round" fill="none" />
         ))}
         {/* Center dot */}
         <circle cx={half} cy={half} r={dotR} fill={color} />
@@ -162,6 +168,10 @@ interface PipeFlowProps {
 }
 
 export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
+  // Daily always uses classic mode
+  const activeMode: PipeMode = isDaily ? 'classic' : useGameStore.getState().pipeMode;
+  const isFlow = activeMode === 'flow';
+
   const [rounds] = useState<PipeRound[]>(() => {
     if (isDaily) {
       const seed = dateToSeed(getTodaySeedStr()) + 7777;
@@ -170,7 +180,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     return createRounds();
   });
 
-  const [state, setStateRaw] = useState<PlayState>(createInitialState);
+  const [state, setStateRaw] = useState<PlayState>(() => createInitialState(isFlow));
   const setState = useCallback(
     (partial: Partial<PlayState>) => setStateRaw(prev => ({ ...prev, ...partial })),
     []
@@ -179,10 +189,13 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   const stateRef = useRef(state);
   const roundsRef = useRef(rounds);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const flowTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const gameEndedRef = useRef(false);
   const gridRef = useRef<PipePuzzle | null>(null);
+  const flowStepRef = useRef(0); // how many steps the liquid has advanced
   const handlersRef = useRef({
     tick: () => {},
+    flowTick: () => {},
     onCellTap: (_row: number, _col: number) => {},
     advanceRound: () => {},
   });
@@ -192,13 +205,15 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   const currentRound = rounds[state.roundIndex];
   const puzzle = gridRef.current;
 
-  // Compute water flow for current puzzle
+  // Compute water flow for current puzzle (classic mode uses this)
   const waterFlow = useMemo(() => {
-    if (!puzzle) return new Set<string>();
+    if (!puzzle || isFlow) return new Set<string>();
     return computeWaterFlow(puzzle);
-  }, [puzzle, state.moves]); // recompute on every move
+  }, [puzzle, state.moves, state.flowFilledCells]);
 
-  const isDrainConnected = waterFlow.has(`${puzzle?.drainRow},${puzzle?.drainCol}`);
+  // In flow mode, use flowFilledCells as the "filled" set
+  const filledCells = isFlow ? state.flowFilledCells : waterFlow;
+  const isDrainConnected = filledCells.has(`${puzzle?.drainRow},${puzzle?.drainCol}`);
 
   // ─── End Game ──────────────────────────────────────────────────────────────
 
@@ -206,6 +221,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     if (gameEndedRef.current) return;
     gameEndedRef.current = true;
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
     setState({ phase: 'ended' });
   }, [setState]);
 
@@ -219,6 +235,8 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       ? Math.round(s.roundTimes.reduce((a, b) => a + b, 0) / s.roundTimes.length)
       : 0;
 
+    const modeLabel = isFlow ? 'Flow' : '';
+
     useGameStore.getState().completeSession({
       game: 'pipe',
       score: s.score,
@@ -227,22 +245,21 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       bestCombo: s.bestCombo,
       timeElapsed: GLOBAL_TIME - s.globalTime,
       isDaily,
-      extra: `${s.totalCorrect}/${s.totalRounds} rounds${avgTime > 0 ? ` · ${avgTime}s avg` : ''}`,
+      extra: `${modeLabel} ${s.totalCorrect}/${s.totalRounds} rounds${avgTime > 0 ? ` · ${avgTime}s avg` : ''}`.trim(),
     });
-  }, [isDaily]);
+  }, [isDaily, isFlow]);
 
   useEffect(() => {
     if (state.phase === 'ended') completeSession();
   }, [state.phase, completeSession]);
 
-  // ─── Timer Tick ─────────────────────────────────────────────────────────────
+  // ─── Timer Tick (classic mode: per-round timer; flow mode: global only) ─────
 
   const tick = useCallback(() => {
     if (gameEndedRef.current) return;
     const s = stateRef.current;
     if (s.phase !== 'playing') return;
 
-    const newRoundTime = s.roundTime - 1;
     const newGlobalTime = s.globalTime - 1;
 
     if (newGlobalTime <= 0) {
@@ -251,26 +268,139 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       return;
     }
 
-    if (newRoundTime <= 0) {
-      // Round timeout
-      const curRound = roundsRef.current[s.roundIndex];
-      setState({
-        roundTime: 0,
-        globalTime: newGlobalTime,
-        phase: 'round_transition',
-        feedback: 'timeout',
-        lastRoundMoves: s.moves,
-        lastRoundTime: curRound?.roundTime ?? 60,
-        lastRoundSolved: false,
-        moves: 0,
-        combo: 0,
-      });
-      setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
+    // Classic: decrement round timer
+    if (!isFlow) {
+      const newRoundTime = s.roundTime - 1;
+      if (newRoundTime <= 0) {
+        const curRound = roundsRef.current[s.roundIndex];
+        setState({
+          roundTime: 0, globalTime: newGlobalTime,
+          phase: 'round_transition', feedback: 'timeout',
+          lastRoundMoves: s.moves, lastRoundTime: curRound?.roundTime ?? 60,
+          lastRoundSolved: false, moves: 0, combo: 0,
+        });
+        setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
+        return;
+      }
+      setState({ roundTime: newRoundTime, globalTime: newGlobalTime });
+    } else {
+      // Flow mode: only global timer
+      setState({ globalTime: newGlobalTime });
+    }
+  }, [setState, endGame, isFlow]);
+
+  // ─── Flow Mode: Liquid Advance Tick ──────────────────────────────────────
+
+  const flowTick = useCallback(() => {
+    if (gameEndedRef.current) return;
+    const s = stateRef.current;
+    if (s.phase !== 'playing' || !isFlow) return;
+    if (s.flowPaused) return; // paused after dead end
+    if (!puzzle) return;
+
+    // Re-trace the flow path from source based on current pipe rotations
+    const steps = traceFlowPath(puzzle);
+    const nextStep = flowStepRef.current + 1;
+
+    if (nextStep > steps.length) {
+      // Already at or past the end — re-check
       return;
     }
 
-    setState({ roundTime: newRoundTime, globalTime: newGlobalTime });
-  }, [setState, endGame]);
+    // Add the next cell to filled set
+    const newFilled = new Set(s.flowFilledCells);
+    for (let i = 0; i < nextStep && i < steps.length; i++) {
+      newFilled.add(`${steps[i].row},${steps[i].col}`);
+    }
+    flowStepRef.current = nextStep;
+    const flowStepUpdate = { flowFilledCells: newFilled, flowStep: nextStep };
+
+    // Check the step we just reached
+    const reachedStep = steps[Math.min(nextStep - 1, steps.length - 1)];
+
+    if (reachedStep?.reachedDrain) {
+      // SUCCESS — liquid reached the drain!
+      const newCombo = s.combo + 1;
+      const stepsUsed = nextStep;
+      const timeBonus = Math.max(0, Math.floor(s.globalTime * 3));
+      const livesBonus = s.lives * 150;
+      const stepsPenalty = Math.max(0, (stepsUsed - 8) * 10); // longer paths = slightly less
+      const roundScore = 600 + timeBonus + livesBonus - stepsPenalty;
+      const timeTaken = 0; // not tracked per-round in flow mode
+
+      setState({
+        ...flowStepUpdate,
+        score: s.score + roundScore,
+        combo: newCombo,
+        bestCombo: Math.max(s.bestCombo, newCombo),
+        totalCorrect: s.totalCorrect + 1,
+        roundsCompleted: s.roundsCompleted + 1,
+        roundTimes: [...s.roundTimes, timeTaken],
+        phase: 'round_transition',
+        feedback: 'solved',
+        lastRoundMoves: s.moves,
+        lastRoundTime: 0,
+        lastRoundSolved: true,
+      });
+
+      // Clear flow timer during transition
+      if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
+
+      setTimeout(() => {
+        if (gameEndedRef.current) return;
+        const cur = stateRef.current;
+        if (cur.phase !== 'round_transition') return;
+        handlersRef.current.advanceRound();
+      }, 2000);
+      return;
+    }
+
+    if (reachedStep?.isDeadEnd) {
+      // Dead end — lose a life, pause the flow
+      const newLives = s.lives - 1;
+
+      if (newLives <= 0) {
+        // No lives left — round failed
+        setState({
+          flowFilledCells: newFilled,
+          lives: 0,
+          phase: 'round_transition',
+          feedback: 'dead_end',
+          lastRoundMoves: s.moves,
+          lastRoundTime: 0,
+          lastRoundSolved: false,
+          combo: 0,
+        });
+        if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
+        setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
+        return;
+      }
+
+      // Pause flow so player can fix pipes
+      setState({
+        ...flowStepUpdate,
+        lives: newLives,
+        flowPaused: true,
+        flowDeadEndKey: s.flowDeadEndKey + 1,
+        feedback: 'dead_end',
+      });
+
+      // Resume flow after pause
+      setTimeout(() => {
+        if (gameEndedRef.current) return;
+        const cur = stateRef.current;
+        if (cur.phase === 'playing') {
+          setState({ flowPaused: false, feedback: null });
+          // Reset flow — re-trace from source with new pipe positions
+          flowStepRef.current = 0;
+        }
+      }, FLOW_PAUSE_MS);
+      return;
+    }
+
+    // Normal advance — just update filled cells and step
+    setState(flowStepUpdate);
+  }, [setState, endGame, isFlow, puzzle]);
 
   // ─── Advance Round ──────────────────────────────────────────────────────────
 
@@ -282,15 +412,22 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
     const nextRound = roundsRef.current[nextIdx];
     gridRef.current = JSON.parse(JSON.stringify(nextRound.puzzle));
+    flowStepRef.current = 0;
+
+    if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
 
     setState({
       phase: 'round_intro',
       roundIndex: nextIdx,
-      roundTime: nextRound.roundTime,
+      roundTime: isFlow ? 999 : nextRound.roundTime,
       moves: 0,
       feedback: null,
+      flowFilledCells: new Set(),
+      flowStep: 0,
+      lives: MAX_LIVES,
+      flowPaused: false,
     });
-  }, [setState, endGame]);
+  }, [setState, endGame, isFlow]);
 
   // ─── Rotate Cell ─────────────────────────────────────────────────────────────
 
@@ -302,25 +439,29 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     const cell = puzzle.grid[row][col];
     if (!cell) return;
 
-    // Rotate 90° clockwise
     cell.rotation = (cell.rotation + 1) % 4;
-
     const newMoves = s.moves + 1;
     setState({ moves: newMoves, totalMoves: s.totalMoves + 1 });
 
-    // Check if solved
-    if (isPuzzleSolved(puzzle)) {
+    // In flow mode: rotating a pipe re-traces the flow path
+    // The filled cells reset to however far the liquid has gotten on the new path
+    if (isFlow && !s.flowPaused) {
+      const steps = traceFlowPath(puzzle);
+      const newFilled = new Set<string>();
+      for (let i = 0; i < s.flowStep && i < steps.length; i++) {
+        newFilled.add(`${steps[i].row},${steps[i].col}`);
+      }
+      setState({ flowFilledCells: newFilled });
+    }
+
+    // Classic mode: check if solved
+    if (!isFlow && isPuzzleSolved(puzzle)) {
       const timeTaken = (currentRound?.roundTime ?? 60) - s.roundTime;
       const newCombo = s.combo + 1;
-
-      // Score: base + time bonus (faster = more) + efficiency bonus (fewer moves)
       const timeBonus = Math.max(0, Math.floor(s.roundTime * 5));
-      const minMoves = puzzle.gridSize * 2; // rough minimum
+      const minMoves = puzzle.gridSize * 2;
       const efficiency = Math.max(0, Math.floor((1 - newMoves / (minMoves * 4)) * 200));
       const roundScore = 500 + timeBonus + efficiency;
-
-      const newRoundTimes = [...s.roundTimes, timeTaken];
-      const newBestTime = Math.min(s.bestTime, timeTaken);
 
       setState({
         score: s.score + roundScore,
@@ -328,8 +469,8 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         bestCombo: Math.max(s.bestCombo, newCombo),
         totalCorrect: s.totalCorrect + 1,
         roundsCompleted: s.roundsCompleted + 1,
-        bestTime: newBestTime,
-        roundTimes: newRoundTimes,
+        bestTime: Math.min(s.bestTime, timeTaken),
+        roundTimes: [...s.roundTimes, timeTaken],
         phase: 'round_transition',
         feedback: 'solved',
         lastRoundMoves: newMoves,
@@ -344,22 +485,45 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         advanceRound();
       }, 2000);
     }
-  }, [setState, advanceRound, puzzle, currentRound]);
+
+    // Flow mode: check if solved (player might have just completed the path)
+    if (isFlow && isPuzzleSolved(puzzle)) {
+      // Don't auto-solve in flow mode — let the liquid reach the drain naturally
+      // But if the flow was paused (dead end), and the player fixes it, resume
+      if (s.flowPaused) {
+        setState({ flowPaused: false, feedback: null });
+        flowStepRef.current = 0;
+      }
+    }
+  }, [setState, advanceRound, puzzle, currentRound, isFlow]);
 
   // ─── Update handlers ref ──────────────────────────────────────────────────
 
-  useEffect(() => { handlersRef.current = { tick, onCellTap, advanceRound }; }, [tick, onCellTap, advanceRound]);
+  useEffect(() => {
+    handlersRef.current = { tick, flowTick, onCellTap, advanceRound };
+  }, [tick, flowTick, onCellTap, advanceRound]);
 
   // ─── Init first puzzle ──────────────────────────────────────────────────────
 
   useEffect(() => {
     gameEndedRef.current = false;
+    flowStepRef.current = 0;
     if (rounds.length > 0) {
       gridRef.current = JSON.parse(JSON.stringify(rounds[0].puzzle));
     }
     timerRef.current = setInterval(() => handlersRef.current.tick(), 1000);
+    // Flow mode: start the liquid flow timer
+    if (isFlow) {
+      // Small delay before liquid starts flowing (let player see the grid)
+      setTimeout(() => {
+        if (!gameEndedRef.current) {
+          flowTimerRef.current = setInterval(() => handlersRef.current.flowTick(), FLOW_TICK_MS);
+        }
+      }, 2200); // after round intro
+    }
     return () => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+      if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
       gameEndedRef.current = true;
     };
   }, []);
@@ -373,16 +537,34 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     const t = setTimeout(() => {
       if (gameEndedRef.current) return;
       gridRef.current = JSON.parse(JSON.stringify(r.puzzle));
-      setState({ phase: 'playing', roundTime: r.roundTime, moves: 0 });
+      flowStepRef.current = 0;
+      setState({
+        phase: 'playing',
+        roundTime: isFlow ? 999 : r.roundTime,
+        moves: 0,
+        flowFilledCells: new Set(),
+        lives: MAX_LIVES,
+        flowPaused: false,
+      });
+      // Start/restart flow timer for this round
+      if (isFlow) {
+        if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
+        // Small delay so player sees the grid before liquid starts
+        setTimeout(() => {
+          if (!gameEndedRef.current) {
+            flowTimerRef.current = setInterval(() => handlersRef.current.flowTick(), FLOW_TICK_MS);
+          }
+        }, 800);
+      }
     }, 1800);
     return () => clearTimeout(t);
-  }, [state.phase, state.roundIndex, setState]);
+  }, [state.phase, state.roundIndex, setState, isFlow]);
 
   // ─── Derived ─────────────────────────────────────────────────────────────────
 
   const timerPct = (state.globalTime / GLOBAL_TIME) * 100;
   const timerColor = timerPct > 50 ? '#58CC02' : timerPct > 20 ? ACCENT : '#FF3B30';
-  const roundTimerPct = currentRound ? (state.roundTime / currentRound.roundTime) * 100 : 0;
+  const roundTimerPct = !isFlow && currentRound ? (state.roundTime / currentRound.roundTime) * 100 : 0;
   const roundTimerColor = roundTimerPct > 50 ? ACCENT : roundTimerPct > 20 ? '#FF9600' : '#FF3B30';
   const formatTime = (secs: number) => `${Math.floor(secs / 60)}:${(secs % 60).toString().padStart(2, '0')}`;
 
@@ -400,20 +582,32 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
   if (state.phase === 'round_intro' && currentRound) {
     const sz = currentRound.puzzle.gridSize;
+    const introColor = isFlow ? WATER_COLOR : ACCENT;
+    const introBg = isFlow ? WATER_LIGHT : ACCENT_LIGHT;
+    const introIcon = isFlow ? '\ud83d\udca7' : '\u2699\ufe0f';
+    const introLabel = isFlow ? 'Flow Mode' : 'Classic';
     return (
       <div className="min-h-[100dvh] flex flex-col items-center justify-center px-5"
-        style={{ background: `linear-gradient(180deg, ${ACCENT_LIGHT} 0%, #F9F9F9 100%)` }}>
+        style={{ background: `linear-gradient(180deg, ${introBg} 0%, #F9F9F9 100%)` }}>
         <div className="text-center phase-flash">
           <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
-            style={{ backgroundColor: ACCENT + '20' }}>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={ACCENT} strokeWidth="2" strokeLinecap="round">
-              <path d="M12 2v20M2 12h20M6 6l12 12M18 6L6 18" />
-            </svg>
+            style={{ backgroundColor: introColor + '20' }}>
+            <span className="text-3xl">{introIcon}</span>
           </div>
           <h2 className="text-2xl font-extrabold text-[#333]">Round {state.roundIndex + 1}</h2>
-          <p className="text-base text-[#999] mt-2">{sz}×{sz} Grid · {currentRound.roundTime}s</p>
-          <p className="text-sm mt-3" style={{ color: ACCENT }}>
-            Tap pipes to rotate · Connect source to drain
+          <p className="text-base text-[#999] mt-2">{sz}\u00d7{sz} Grid{!isFlow ? ` · ${currentRound.roundTime}s` : ''}</p>
+          <div className="flex items-center justify-center gap-2 mt-2">
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white" style={{ background: introColor }}>
+              {introLabel}
+            </span>
+            {isFlow && (
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: '#FFE8E5', color: DRAIN_COLOR }}>
+                {state.lives} {'\u2764\ufe0f'}
+              </span>
+            )}
+          </div>
+          <p className="text-sm mt-3" style={{ color: introColor }}>
+            {isFlow ? 'Liquid flows in real-time!' : 'Tap pipes to rotate \u00b7 Connect source to drain'}
           </p>
         </div>
       </div>
@@ -423,26 +617,35 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   // ─── Round Transition Overlay ───────────────────────────────────────────────
 
   if (state.phase === 'round_transition') {
+    let icon: string;
+    let title: string;
+    let subtitle: string;
+    let subtitleColor: string;
+
+    if (state.lastRoundSolved) {
+      icon = '\u2705';
+      title = isFlow ? 'Drain Reached!' : 'Connected!';
+      subtitle = `${state.lastRoundMoves} moves${!isFlow ? ` · ${state.lastRoundTime}s` : ''}`;
+      subtitleColor = '#58CC02';
+    } else if (state.feedback === 'dead_end') {
+      icon = '\ud83d\udca7';
+      title = 'Dead End!';
+      subtitle = isFlow ? `${state.lives} lives remaining` : `${state.lastRoundMoves} moves used`;
+      subtitleColor = '#FF3B30';
+    } else {
+      icon = '\u23f0';
+      title = "Time's Up!";
+      subtitle = `${state.lastRoundMoves} moves used`;
+      subtitleColor = '#999';
+    }
+
     return (
       <div className="min-h-[100dvh] flex flex-col items-center justify-center px-5"
         style={{ background: '#F9F9F9' }}>
         <div className="text-center phase-flash">
-          <div className="text-5xl mb-3">
-            {state.lastRoundSolved ? '\u2705' : '\u23f0'}
-          </div>
-          <p className="text-xl font-extrabold text-[#333]">
-            {state.lastRoundSolved ? 'Connected!' : 'Time\'s Up!'}
-          </p>
-          {state.lastRoundSolved && (
-            <p className="text-base mt-1" style={{ color: '#58CC02' }}>
-              {state.lastRoundMoves} moves · {state.lastRoundTime}s
-            </p>
-          )}
-          {!state.lastRoundSolved && (
-            <p className="text-base mt-1" style={{ color: '#999' }}>
-              {state.lastRoundMoves} moves used
-            </p>
-          )}
+          <div className="text-5xl mb-3">{icon}</div>
+          <p className="text-xl font-extrabold text-[#333]">{title}</p>
+          <p className="text-base mt-1" style={{ color: subtitleColor }}>{subtitle}</p>
         </div>
       </div>
     );
@@ -467,14 +670,12 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
             {[1, 2, 3].map(s => {
               const stars = state.totalCorrect >= 4 ? 3 : state.totalCorrect >= 3 ? 2 : state.totalCorrect >= 2 ? 1 : 0;
               return (
-                <span key={s} className="text-4xl" style={{ opacity: s <= stars ? 1 : 0.2 }}>
-                  {'\u2b50'}
-                </span>
+                <span key={s} className="text-4xl" style={{ opacity: s <= stars ? 1 : 0.2 }}>{'\u2b50'}</span>
               );
             })}
           </div>
           <div className="text-sm mb-4" style={{ color: '#999' }}>
-            {state.totalCorrect}/{state.totalRounds} rounds · {state.totalMoves} moves · Accuracy: {accuracy}%
+            {state.totalCorrect}/{state.totalRounds} rounds · {state.totalMoves} moves · {isFlow ? 'Flow' : 'Classic'} · {accuracy}%
           </div>
           <button
             onClick={() => useGameStore.getState().setScreen('home')}
@@ -491,13 +692,45 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
   if (!puzzle || !currentRound) return null;
 
+  const modeColor = isFlow ? WATER_COLOR : ACCENT;
+  const modeLabel = isFlow ? 'FLOW' : 'PIPE';
+
+  // Flow mode: render the leading-edge glow on the frontier cell
+  const renderFrontierGlow = () => {
+    if (!isFlow || state.flowFilledCells.size === 0 || state.flowPaused || !puzzle) return null;
+    const steps = traceFlowPath(puzzle);
+    const frontierIdx = Math.min(state.flowStep, steps.length - 1);
+    if (frontierIdx < 0 || frontierIdx >= steps.length) return null;
+    const f = steps[frontierIdx];
+    if (f.reachedDrain || f.isDeadEnd) return null;
+    return (
+      <div
+        className="absolute rounded-lg pointer-events-none"
+        style={{
+          left: 8 + f.col * cellSize,
+          top: 8 + f.row * cellSize,
+          width: cellSize - 2,
+          height: cellSize - 2,
+          boxShadow: `0 0 12px ${WATER_COLOR}60, inset 0 0 8px ${WATER_COLOR}30`,
+          animation: 'flow-pulse 1.2s ease-in-out infinite',
+          borderRadius: 8,
+        }}
+      />
+    );
+  };
+
   return (
     <div className="flex flex-col items-center min-h-[100dvh] pb-24 pt-safe relative" style={{ background: '#F9F9F9' }}>
 
       {/* ── Header ── */}
       <div className="w-full flex items-center justify-between px-4 py-3" style={{ maxWidth: 400 }}>
         <button
-          onClick={() => { if (timerRef.current) clearInterval(timerRef.current); gameEndedRef.current = true; useGameStore.getState().setScreen('home'); }}
+          onClick={() => {
+            if (timerRef.current) clearInterval(timerRef.current);
+            if (flowTimerRef.current) clearInterval(flowTimerRef.current);
+            gameEndedRef.current = true;
+            useGameStore.getState().setScreen('home');
+          }}
           className="text-sm font-semibold flex items-center gap-1" style={{ color: '#333', background: 'none', border: 'none', cursor: 'pointer' }}>
           {'\u2190'} Back
         </button>
@@ -510,8 +743,8 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: ACCENT }}>
-            PIPE
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: modeColor }}>
+            {modeLabel}
           </span>
           <span className="text-xs font-semibold" style={{ color: '#999' }}>
             {state.roundIndex + 1}/{rounds.length}
@@ -519,22 +752,37 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         </div>
       </div>
 
-      {/* ── Round Timer ── */}
-      <div className="w-full px-4 mb-2" style={{ maxWidth: 400 }}>
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-medium" style={{ color: '#999' }}>Round time</span>
-          <span className="text-xs font-bold" style={{ color: roundTimerColor }}>{state.roundTime}s</span>
+      {/* ── Round Timer (classic only) / Lives (flow) ── */}
+      {!isFlow ? (
+        <div className="w-full px-4 mb-2" style={{ maxWidth: 400 }}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-medium" style={{ color: '#999' }}>Round time</span>
+            <span className="text-xs font-bold" style={{ color: roundTimerColor }}>{state.roundTime}s</span>
+          </div>
+          <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: '#E0E0E0' }}>
+            <div className="h-full rounded-full transition-all duration-1000 ease-linear" style={{ width: `${roundTimerPct}%`, background: roundTimerColor }} />
+          </div>
         </div>
-        <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: '#E0E0E0' }}>
-          <div className="h-full rounded-full transition-all duration-1000 ease-linear" style={{ width: `${roundTimerPct}%`, background: roundTimerColor }} />
+      ) : (
+        <div className="flex items-center justify-center gap-1.5 mb-2">
+          {Array.from({ length: MAX_LIVES }).map((_, i) => (
+            <span key={i} className="text-base" style={{ opacity: i < state.lives ? 1 : 0.2, transition: 'opacity 0.3s' }}>
+              {'\u2764\ufe0f'}
+            </span>
+          ))}
+          {state.flowPaused && (
+            <span className="text-xs font-bold ml-2 px-2 py-0.5 rounded-full animate-pulse" style={{ background: '#FFE8E5', color: '#FF3B30' }}>
+              Fix the pipes!
+            </span>
+          )}
         </div>
-      </div>
+      )}
 
       {/* ── Combo ── */}
       <div className="flex items-center gap-1 mb-2" style={{ height: 28 }}>
         {state.combo >= 2 && (
           <div className="flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold"
-            style={{ background: state.combo >= 3 ? ACCENT : '#58CC02', color: '#fff', animation: 'combo-pulse 0.5s ease' }}>
+            style={{ background: state.combo >= 3 ? modeColor : '#58CC02', color: '#fff', animation: 'combo-pulse 0.5s ease' }}>
             {state.combo >= 3 && <span>{'\ud83d\udd25'}</span>}
             x{state.combo}
           </div>
@@ -557,32 +805,22 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       {/* ═══════ PIPE GRID ═══════ */}
       <div
         className="relative rounded-2xl p-2"
-        style={{
-          width: actualGridSize + 16,
-          height: actualGridSize + 16,
-          background: GRID_BG,
-        }}
+        style={{ width: actualGridSize + 16, height: actualGridSize + 16, background: GRID_BG }}
       >
         {/* Grid lines (subtle) */}
         <div className="absolute inset-2 rounded-xl overflow-hidden" style={{ opacity: 0.3 }}>
           {Array.from({ length: puzzle.gridSize + 1 }).map((_, i) => (
-            <div key={`h-${i}`}
-              className="absolute bg-[#CCC]"
-              style={{ left: 0, right: 0, top: i * cellSize, height: 1 }}
-            />
+            <div key={`h-${i}`} className="absolute bg-[#CCC]" style={{ left: 0, right: 0, top: i * cellSize, height: 1 }} />
           ))}
           {Array.from({ length: puzzle.gridSize + 1 }).map((_, i) => (
-            <div key={`v-${i}`}
-              className="absolute bg-[#CCC]"
-              style={{ top: 0, bottom: 0, left: i * cellSize, width: 1 }}
-            />
+            <div key={`v-${i}`} className="absolute bg-[#CCC]" style={{ top: 0, bottom: 0, left: i * cellSize, width: 1 }} />
           ))}
         </div>
 
         {/* Pipe cells */}
         {puzzle.grid.map((row, r) =>
           row.map((cell, c) => {
-            const isFilled = waterFlow.has(`${r},${c}`);
+            const isFilled = filledCells.has(`${r},${c}`);
             return (
               <div key={`${r}-${c}`} className="absolute"
                 style={{ left: 8 + c * cellSize, top: 8 + r * cellSize }}>
@@ -601,20 +839,19 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
           })
         )}
 
+        {/* Flow mode: leading edge glow on the frontier cell */}
+        {renderFrontierGlow()}
+
         {/* Source label */}
         <div className="absolute flex items-center justify-center"
           style={{ left: -6, top: 8 + puzzle.sourceRow * cellSize + cellSize / 2, transform: 'translate(-100%, -50%)' }}>
-          <span className="text-xs font-bold px-1.5 py-0.5 rounded-full text-white" style={{ background: SOURCE_COLOR }}>
-            IN
-          </span>
+          <span className="text-xs font-bold px-1.5 py-0.5 rounded-full text-white" style={{ background: SOURCE_COLOR }}>IN</span>
         </div>
 
         {/* Drain label */}
         <div className="absolute flex items-center justify-center"
           style={{ left: actualGridSize + 14, top: 8 + puzzle.drainRow * cellSize + cellSize / 2, transform: 'translateY(-50%)' }}>
-          <span className="text-xs font-bold px-1.5 py-0.5 rounded-full text-white" style={{ background: isDrainConnected ? SOURCE_COLOR : DRAIN_COLOR }}>
-            OUT
-          </span>
+          <span className="text-xs font-bold px-1.5 py-0.5 rounded-full text-white" style={{ background: isDrainConnected ? SOURCE_COLOR : DRAIN_COLOR }}>OUT</span>
         </div>
       </div>
 
@@ -625,10 +862,19 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         </div>
       )}
 
+      {/* ── Dead End Pop ── */}
+      {state.feedback === 'dead_end' && state.flowPaused && (
+        <div className="fixed font-black text-base" key={state.flowDeadEndKey}
+          style={{ color: '#FF3B30', animation: 'float-up 1.5s ease-out forwards', zIndex: 100, pointerEvents: 'none', top: '40%', left: '50%', transform: 'translateX(-50%)' }}>
+          {'\ud83d\udca7'} Dead end! -1 {'\u2764\ufe0f'}
+        </div>
+      )}
+
       {/* ── Inline Styles / Keyframes ── */}
       <style jsx>{`
         @keyframes float-up { 0% { opacity: 1; transform: translateY(0) translateX(-50%); } 100% { opacity: 0; transform: translateY(-60px) translateX(-50%); } }
         @keyframes slide-up { 0% { opacity: 0; transform: translateY(30px); } 100% { opacity: 1; transform: translateY(0); } }
+        @keyframes flow-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }
       `}</style>
     </div>
   );

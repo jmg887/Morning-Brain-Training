@@ -10,6 +10,7 @@ import OddOneOut from '@/components/games/OddOneOut';
 import PipeFlow from '@/components/games/PipeFlow';
 import ScoreScreen from '@/components/ScoreScreen';
 import WordDifficultyPicker from '@/components/WordDifficultyPicker';
+import PipeModePicker from '@/components/PipeModePicker';
 import BottomNav from '@/components/BottomNav';
 
 export default function Page() {
@@ -25,6 +26,7 @@ export default function Page() {
       {currentScreen === 'word' && <WordFusion />}
       {currentScreen === 'oddone' && <OddOneOut />}
       {currentScreen === 'pipe' && <PipeFlow />}
+      {currentScreen === 'pipe_picker' && <PipeModePicker />}
       {currentScreen === 'score' && <ScoreScreen />}
       {currentScreen === 'word_picker' && <WordDifficultyPicker />}
       <BottomNav />
