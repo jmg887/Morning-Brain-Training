@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipe Water Demo</title>
+<style>
+  body {
+    background: #F9F9F9;
+    font-family: -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 40px;
+    padding: 40px 20px;
+  }
+  h2 { color: #333; font-size: 18px; margin-bottom: -20px; }
+  .demo-row {
+    display: flex;
+    gap: 60px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .pipe-cell {
+    width: 90px;
+    height: 90px;
+    border-radius: 10px;
+    background: #E8F6FF;
+    border: 2px solid rgba(28, 176, 246, 0.25);
+    position: relative;
+    box-shadow: 0 0 8px rgba(28, 176, 246, 0.25);
+    animation: cell-glow 1.5s ease-in-out infinite;
+  }
+  .pipe-cell.flow-mode {
+    animation: cell-glow-flow 1s ease-in-out infinite;
+  }
+  .pipe-cell.frontier {
+    animation: cell-glow-frontier 1s ease-in-out infinite;
+  }
+  .pipe-cell.no-glow {
+    animation: none;
+  }
+
+  @keyframes cell-glow {
+    0%, 100% { box-shadow: 0 0 8px rgba(28, 176, 246, 0.3), inset 0 0 6px rgba(28, 176, 246, 0.15); }
+    50% { box-shadow: 0 0 14px rgba(28, 176, 246, 0.5), inset 0 0 10px rgba(28, 176, 246, 0.25); }
+  }
+  @keyframes cell-glow-flow {
+    0%, 100% { box-shadow: 0 0 10px rgba(28, 176, 246, 0.35), inset 0 0 8px rgba(28, 176, 246, 0.2); }
+    50% { box-shadow: 0 0 18px rgba(28, 176, 246, 0.6), inset 0 0 12px rgba(28, 176, 246, 0.3); }
+  }
+  @keyframes cell-glow-frontier {
+    0%, 100% { box-shadow: 0 0 12px rgba(28, 176, 246, 0.4), inset 0 0 8px rgba(28, 176, 246, 0.25); border-color: rgba(28, 176, 246, 0.4); }
+    50% { box-shadow: 0 0 22px rgba(28, 176, 246, 0.7), inset 0 0 14px rgba(28, 176, 246, 0.35); border-color: rgba(28, 176, 246, 0.6); }
+  }
+
+  /* Layer 1: Moving dashes */
+  .liquid-path {
+    stroke-dasharray: 8 6;
+    animation: dash-flow 0.8s linear infinite;
+  }
+  .liquid-path.fast {
+    animation: dash-flow-fast 0.5s linear infinite;
+  }
+  @keyframes dash-flow {
+    to { stroke-dashoffset: -14; }
+  }
+  @keyframes dash-flow-fast {
+    to { stroke-dashoffset: -14; }
+  }
+
+  /* Layer 3: Center bubble */
+  .bubble {
+    animation: bubble-pulse 2s ease-in-out infinite;
+    transform-origin: center;
+  }
+  @keyframes bubble-pulse {
+    0%, 100% { r: 6; opacity: 0.7; }
+    50% { r: 7.5; opacity: 1; }
+  }
+
+  .label {
+    color: #999;
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 8px;
+    text-align: center;
+  }
+  .compare {
+    display: flex;
+    gap: 40px;
+    align-items: flex-start;
+  }
+  .compare-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .compare-col h3 {
+    color: #555;
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+
+  /* Old style for comparison */
+  .old-cell {
+    width: 90px;
+    height: 90px;
+    border-radius: 10px;
+    background: #E8F6FF;
+    border: 2px solid rgba(28, 176, 246, 0.25);
+    box-shadow: 0 0 10px rgba(28, 176, 246, 0.25), inset 0 0 6px rgba(28, 176, 246, 0.13);
+  }
+  .old-liquid {
+    animation: old-shimmer 2s ease-in-out infinite;
+  }
+  @keyframes old-shimmer {
+    0%, 100% { opacity: 0.85; }
+    50% { opacity: 1; }
+  }
+</style>
+</head>
+<body>
+
+<h2>OLD vs NEW</h2>
+<div class="compare">
+  <!-- OLD -->
+  <div class="compare-col">
+    <h3>Old (shimmer only)</h3>
+    <div class="old-cell">
+      <svg width="90" height="90" viewBox="0 0 90 90">
+        <path d="M 45 45 L 45 0" stroke="#1CB0F6" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path d="M 45 45 L 90 45" stroke="#1CB0F6" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path class="old-liquid" d="M 45 45 L 45 0" stroke="#1CB0F6" stroke-width="16" stroke-linecap="round" fill="none" opacity="0.9"/>
+        <path class="old-liquid" d="M 45 45 L 90 45" stroke="#1CB0F6" stroke-width="16" stroke-linecap="round" fill="none" opacity="0.9"/>
+        <circle cx="45" cy="45" r="6" fill="#1CB0F6"/>
+      </svg>
+    </div>
+    <span class="label">Bend pipe — filled</span>
+  </div>
+
+  <!-- NEW: Classic -->
+  <div class="compare-col">
+    <h3>New — Classic</h3>
+    <div class="pipe-cell">
+      <svg width="90" height="90" viewBox="0 0 90 90">
+        <!-- Base pipe (gray) -->
+        <path d="M 45 45 L 45 0" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path d="M 45 45 L 90 45" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <!-- Moving dashes -->
+        <path class="liquid-path" d="M 45 45 L 45 0" stroke="#7DD3FC" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path" d="M 45 45 L 90 45" stroke="#38BDF8" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <!-- Center dot -->
+        <circle cx="45" cy="45" r="6" fill="#1CB0F6"/>
+        <!-- Bubble -->
+        <circle class="bubble" cx="45" cy="45" r="6" fill="#7DD3FC" opacity="0.7"/>
+      </svg>
+    </div>
+    <span class="label">Bend pipe — filled</span>
+  </div>
+
+  <!-- NEW: Flow -->
+  <div class="compare-col">
+    <h3>New — Flow mode</h3>
+    <div class="pipe-cell flow-mode">
+      <svg width="90" height="90" viewBox="0 0 90 90">
+        <path d="M 45 45 L 45 0" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path d="M 45 45 L 90 45" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path fast" d="M 45 45 L 45 0" stroke="#7DD3FC" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path fast" d="M 45 45 L 90 45" stroke="#38BDF8" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <circle cx="45" cy="45" r="6" fill="#1CB0F6"/>
+        <circle class="bubble" cx="45" cy="45" r="6" fill="#7DD3FC" opacity="0.7"/>
+      </svg>
+    </div>
+    <span class="label">Bend pipe — filled</span>
+  </div>
+</div>
+
+<h2>PIPE TYPES — New Style</h2>
+<div class="demo-row">
+  <!-- Straight -->
+  <div class="compare-col">
+    <div class="pipe-cell">
+      <svg width="90" height="90" viewBox="0 0 90 90">
+        <path d="M 0 45 L 90 45" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path" d="M 0 45 L 90 45" stroke="#7DD3FC" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <circle cx="45" cy="45" r="6" fill="#1CB0F6"/>
+        <circle class="bubble" cx="45" cy="45" r="6" fill="#7DD3FC" opacity="0.7"/>
+      </svg>
+    </div>
+    <span class="label">Straight</span>
+  </div>
+
+  <!-- T-pipe -->
+  <div class="compare-col">
+    <div class="pipe-cell">
+      <svg width="90" height="90" viewBox="0 0 90 90">
+        <path d="M 45 45 L 0 45" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path d="M 45 45 L 90 45" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path d="M 45 45 L 45 90" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path" d="M 45 45 L 0 45" stroke="#7DD3FC" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path" d="M 45 45 L 90 45" stroke="#38BDF8" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path" d="M 45 45 L 45 90" stroke="#1CB0F6" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <circle cx="45" cy="45" r="6" fill="#1CB0F6"/>
+        <circle class="bubble" cx="45" cy="45" r="6" fill="#7DD3FC" opacity="0.7"/>
+      </svg>
+    </div>
+    <span class="label">T-pipe</span>
+  </div>
+
+  <!-- Cross -->
+  <div class="compare-col">
+    <div class="pipe-cell">
+      <svg width="90" height="90" viewBox="0 0 90 90">
+        <path d="M 45 45 L 45 0" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path d="M 45 45 L 45 90" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path d="M 45 45 L 0 45" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path d="M 45 45 L 90 45" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path" d="M 45 45 L 45 0" stroke="#7DD3FC" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path" d="M 45 45 L 45 90" stroke="#38BDF8" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path" d="M 45 45 L 0 45" stroke="#1CB0F6" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path" d="M 45 45 L 90 45" stroke="#0284C7" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <circle cx="45" cy="45" r="6" fill="#1CB0F6"/>
+        <circle class="bubble" cx="45" cy="45" r="6" fill="#7DD3FC" opacity="0.7"/>
+      </svg>
+    </div>
+    <span class="label">Cross</span>
+  </div>
+
+  <!-- Frontier cell -->
+  <div class="compare-col">
+    <div class="pipe-cell frontier">
+      <svg width="90" height="90" viewBox="0 0 90 90">
+        <path d="M 45 45 L 45 0" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path d="M 45 45 L 90 45" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path fast" d="M 45 45 L 45 0" stroke="#7DD3FC" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <path class="liquid-path fast" d="M 45 45 L 90 45" stroke="#38BDF8" stroke-width="16" stroke-linecap="round" fill="none"/>
+        <circle cx="45" cy="45" r="6" fill="#1CB0F6"/>
+        <circle class="bubble" cx="45" cy="45" r="6" fill="#7DD3FC" opacity="0.7"/>
+      </svg>
+    </div>
+    <span class="label">Frontier (flow)</span>
+  </div>
+</div>
+
+<h2>UNFILLED (for reference)</h2>
+<div class="demo-row">
+  <div class="compare-col">
+    <div class="pipe-cell no-glow" style="background:#F5F5F5; border-color:#E8E8E8; box-shadow:none;">
+      <svg width="90" height="90" viewBox="0 0 90 90">
+        <path d="M 45 45 L 45 0" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <path d="M 45 45 L 90 45" stroke="#555" stroke-width="18" stroke-linecap="round" fill="none"/>
+        <circle cx="45" cy="45" r="6" fill="#555"/>
+      </svg>
+    </div>
+    <span class="label">Unfilled bend</span>
+  </div>
+</div>
+
+</body>
+</html>
