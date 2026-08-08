@@ -99,13 +99,12 @@ interface PipeCellProps {
   isSource: boolean;
   isDrain: boolean;
   isDrainConnected: boolean;
+  isFrontier: boolean;
   onClick: () => void;
-  // Shared SVG filter/gradient IDs (defined once at grid level, not per-cell)
-  liquidGradId: string;
-  liquidFilterId: string;
+  flowSpeed: 'classic' | 'flow' | 'frontier';
 }
 
-function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, onClick, liquidGradId, liquidFilterId }: PipeCellProps) {
+function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed }: PipeCellProps) {
   const half = size / 2;
   const thickness = Math.max(size * 0.22, 6);
   const color = isSource ? SOURCE_COLOR : isDrain ? (isDrainConnected ? DRAIN_COLOR : '#CC3333') : isFilled ? PIPE_FILLED : PIPE_COLOR;
@@ -126,16 +125,35 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
   // Build dot at center
   const dotR = thickness * 0.45;
 
+  // Water colors: stagger across segments for depth
+  const waterColors = ['#7DD3FC', '#38BDF8', '#1CB0F6', '#0284C7'];
+
+  // Pick animation class based on flow speed
+  const dashAnim = flowSpeed === 'frontier'
+    ? 'dash-flow-fast'
+    : flowSpeed === 'flow'
+      ? 'dash-flow-fast'
+      : 'dash-flow-classic';
+
+  // Glow animation class
+  const glowAnim = isFrontier
+    ? 'water-glow-frontier'
+    : flowSpeed === 'flow'
+      ? 'water-glow-flow'
+      : 'water-glow-classic';
+
+  // Bubble only on cells with 2+ connections (not dead ends)
+  const hasBubble = isFilled && conns.length >= 2;
+
   return (
     <button
       onClick={onClick}
-      className="absolute rounded-lg transition-all duration-150 active:scale-95"
+      className={`absolute rounded-lg transition-all duration-150 active:scale-95 ${isFilled ? glowAnim : ''}`}
       style={{
         width: size, height: size, left: 0, top: 0,
         background: bgColor,
         border: `2px solid ${isFilled ? (isSource ? SOURCE_COLOR : isDrain ? DRAIN_COLOR : WATER_COLOR) + '40' : GRID_BG}`,
         cursor: 'pointer',
-        boxShadow: isFilled ? `0 0 10px ${WATER_COLOR}40, inset 0 0 6px ${WATER_COLOR}20` : 'none',
       }}
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
@@ -143,30 +161,29 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
         {segments.map((d, i) => (
           <path key={i} d={d} stroke={color} strokeWidth={thickness} strokeLinecap="round" fill="none" />
         ))}
-        {/* Liquid-filled segments (on top, with gradient + subtle displacement) */}
+        {/* Liquid-filled segments: moving dashes with gradient colors */}
         {isFilled && segments.map((d, i) => (
           <path
             key={`liq-${i}`}
             d={d}
-            stroke={`url(#${liquidGradId})`}
+            stroke={waterColors[i % waterColors.length]}
             strokeWidth={thickness - 2}
             strokeLinecap="round"
             fill="none"
-            filter={`url(#${liquidFilterId})`}
-            style={{ animation: 'liquid-shimmer 2s ease-in-out infinite' }}
+            strokeDasharray="8 6"
+            className={dashAnim}
           />
         ))}
         {/* Center dot */}
         <circle cx={half} cy={half} r={dotR} fill={color} />
-        {/* Liquid center glow when filled */}
-        {isFilled && (
+        {/* Center bubble glow when filled (only on junctions) */}
+        {hasBubble && (
           <circle
             cx={half}
             cy={half}
             r={dotR + 1}
-            fill={`url(#${liquidGradId})`}
-            filter={`url(#${liquidFilterId})`}
-            style={{ animation: 'liquid-bubble 1.8s ease-in-out infinite' }}
+            fill="#7DD3FC"
+            className="water-bubble"
           />
         )}
         {/* Source icon */}
@@ -251,9 +268,21 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   const filledCells = isFlow ? state.flowFilledCells : waterFlow;
   const isDrainConnected = filledCells.has(`${activePuzzle?.drainRow},${activePuzzle?.drainCol}`);
 
-  // ─── FIX #1: Shared SVG filter IDs (stable, defined once at grid level) ───
-  const liquidGradId = 'pipe-liquid-grad';
-  const liquidFilterId = 'pipe-liquid-filter';
+  // Determine flow speed for cells
+  const getFlowSpeed = useCallback((r: number, c: number): 'classic' | 'flow' | 'frontier' => {
+    if (!isFlow) return 'classic';
+    if (state.flowPaused) return 'classic';
+    const p = gridRef.current;
+    if (!p) return 'classic';
+    // Check if this cell is the frontier
+    const steps = traceFlowPath(p);
+    const frontierIdx = Math.min(flowStepRef.current, steps.length - 1);
+    if (frontierIdx >= 0 && frontierIdx < steps.length) {
+      const f = steps[frontierIdx];
+      if (f.row === r && f.col === c && !f.reachedDrain && !f.isDeadEnd) return 'frontier';
+    }
+    return 'flow';
+  }, [isFlow, state.flowPaused]);
 
   // ─── End Game ──────────────────────────────────────────────────────────────
 
@@ -753,30 +782,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   const modeColor = isFlow ? WATER_COLOR : ACCENT;
   const modeLabel = isFlow ? 'FLOW' : 'PIPE';
 
-  // Flow mode: render the leading-edge glow on the frontier cell
-  const renderFrontierGlow = () => {
-    if (!isFlow || state.flowFilledCells.size === 0 || state.flowPaused || !activePuzzle) return null;
-    const steps = traceFlowPath(activePuzzle);
-    const frontierIdx = Math.min(flowStepRef.current, steps.length - 1);
-    if (frontierIdx < 0 || frontierIdx >= steps.length) return null;
-    const f = steps[frontierIdx];
-    if (f.reachedDrain || f.isDeadEnd) return null;
-    return (
-      <div
-        className="absolute rounded-lg pointer-events-none"
-        style={{
-          left: 8 + f.col * cellSize,
-          top: 8 + f.row * cellSize,
-          width: cellSize - 2,
-          height: cellSize - 2,
-          boxShadow: `0 0 12px ${WATER_COLOR}60, inset 0 0 8px ${WATER_COLOR}30`,
-          animation: 'flow-pulse 1.2s ease-in-out infinite',
-          borderRadius: 8,
-        }}
-      />
-    );
-  };
-
   return (
     <div className="flex flex-col items-center min-h-[100dvh] pb-24 pt-safe relative" style={{ background: '#F9F9F9' }}>
 
@@ -865,37 +870,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         className="relative rounded-2xl p-2"
         style={{ width: actualGridSize + 16, height: actualGridSize + 16, background: GRID_BG }}
       >
-        {/* ── FIX #1: Single shared SVG defs block for all cells ── */}
-        <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
-          <defs>
-            <linearGradient id={liquidGradId} x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#7DD3FC" />
-              <stop offset="35%" stopColor="#38BDF8" />
-              <stop offset="65%" stopColor="#1CB0F6" />
-              <stop offset="100%" stopColor="#0284C7" />
-            </linearGradient>
-            {/* FIX #1: Single shared filter — no more per-cell feTurbulence.
-                Reduced octaves (2 instead of 3), scale=1.5 (was 3),
-                and NO animated seed for massive perf improvement. */}
-            <filter id={liquidFilterId} x="-5%" y="-5%" width="110%" height="110%">
-              <feTurbulence
-                type="fractalNoise"
-                baseFrequency="0.04 0.08"
-                numOctaves="2"
-                seed={42}
-                result="turb"
-              />
-              <feDisplacementMap
-                in="SourceGraphic"
-                in2="turb"
-                scale="1.5"
-                xChannelSelector="R"
-                yChannelSelector="G"
-              />
-            </filter>
-          </defs>
-        </svg>
-
         {/* Grid lines (subtle) */}
         <div className="absolute inset-2 rounded-xl overflow-hidden" style={{ opacity: 0.3 }}>
           {Array.from({ length: activePuzzle.gridSize + 1 }).map((_, i) => (
@@ -921,17 +895,14 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
                   isSource={cell.isSource}
                   isDrain={cell.isDrain}
                   isDrainConnected={isDrainConnected}
+                  isFrontier={false}
                   onClick={() => handlersRef.current.onCellTap(r, c)}
-                  liquidGradId={liquidGradId}
-                  liquidFilterId={liquidFilterId}
+                  flowSpeed={isFilled ? getFlowSpeed(r, c) : 'classic'}
                 />
               </div>
             );
           })
         )}
-
-        {/* Flow mode: leading edge glow on the frontier cell */}
-        {renderFrontierGlow()}
 
         {/* Source label */}
         <div className="absolute flex items-center justify-center"
@@ -966,13 +937,53 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         @keyframes float-up { 0% { opacity: 1; transform: translateY(0) translateX(-50%); } 100% { opacity: 0; transform: translateY(-60px) translateX(-50%); } }
         @keyframes slide-up { 0% { opacity: 0; transform: translateY(30px); } 100% { opacity: 1; transform: translateY(0); } }
         @keyframes flow-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }
-        @keyframes liquid-shimmer {
-          0%, 100% { opacity: 0.85; }
-          50% { opacity: 1; }
+
+        /* ── Water: moving dashes ── */
+        @keyframes dash-classic {
+          to { stroke-dashoffset: -14; }
         }
-        @keyframes liquid-bubble {
-          0%, 100% { opacity: 0.6; }
-          50% { opacity: 0.95; }
+        @keyframes dash-fast {
+          to { stroke-dashoffset: -14; }
+        }
+        .dash-flow-classic {
+          animation: dash-classic 0.8s linear infinite;
+        }
+        .dash-flow-fast {
+          animation: dash-fast 0.5s linear infinite;
+        }
+
+        /* ── Water: pulsing cell glow ── */
+        @keyframes glow-classic {
+          0%, 100% { box-shadow: 0 0 8px rgba(28,176,246,0.3), inset 0 0 6px rgba(28,176,246,0.15); }
+          50% { box-shadow: 0 0 14px rgba(28,176,246,0.5), inset 0 0 10px rgba(28,176,246,0.25); }
+        }
+        @keyframes glow-flow {
+          0%, 100% { box-shadow: 0 0 10px rgba(28,176,246,0.35), inset 0 0 8px rgba(28,176,246,0.2); }
+          50% { box-shadow: 0 0 18px rgba(28,176,246,0.6), inset 0 0 12px rgba(28,176,246,0.3); }
+        }
+        @keyframes glow-frontier {
+          0%, 100% { box-shadow: 0 0 12px rgba(28,176,246,0.4), inset 0 0 8px rgba(28,176,246,0.25); border-color: rgba(28,176,246,0.4); }
+          50% { box-shadow: 0 0 22px rgba(28,176,246,0.7), inset 0 0 14px rgba(28,176,246,0.35); border-color: rgba(28,176,246,0.6); }
+        }
+        .water-glow-classic {
+          animation: glow-classic 1.5s ease-in-out infinite;
+        }
+        .water-glow-flow {
+          animation: glow-flow 1s ease-in-out infinite;
+        }
+        .water-glow-frontier {
+          animation: glow-frontier 1s ease-in-out infinite;
+        }
+
+        /* ── Water: center bubble ── */
+        @keyframes bubble-breathe {
+          0%, 100% { opacity: 0.6; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.15); }
+        }
+        .water-bubble {
+          animation: bubble-breathe 2s ease-in-out infinite;
+          transform-origin: center;
+          transform-box: fill-box;
         }
       `}</style>
     </div>
