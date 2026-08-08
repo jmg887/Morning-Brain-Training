@@ -37,7 +37,9 @@ export interface PipePuzzle {
 
 // ─── Direction Math ──────────────────────────────────────────────────────────
 
-const DIRS: Direction[] = ['up', 'down', 'left', 'right'];
+// Order must be: 0=top, 1=right, 2=bottom, 3=left (clockwise from top)
+// This is critical for pipeTypeForConnections to correctly identify straight vs bend
+const DIRS: Direction[] = ['up', 'right', 'down', 'left'];
 const DR: Record<Direction, [number, number]> = {
   up: [-1, 0],
   down: [1, 0],
