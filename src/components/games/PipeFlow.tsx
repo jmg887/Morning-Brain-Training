@@ -100,9 +100,12 @@ interface PipeCellProps {
   isDrain: boolean;
   isDrainConnected: boolean;
   onClick: () => void;
+  // Shared SVG filter/gradient IDs (defined once at grid level, not per-cell)
+  liquidGradId: string;
+  liquidFilterId: string;
 }
 
-function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, onClick }: PipeCellProps) {
+function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, onClick, liquidGradId, liquidFilterId }: PipeCellProps) {
   const half = size / 2;
   const thickness = Math.max(size * 0.22, 6);
   const color = isSource ? SOURCE_COLOR : isDrain ? (isDrainConnected ? DRAIN_COLOR : '#CC3333') : isFilled ? PIPE_FILLED : PIPE_COLOR;
@@ -123,11 +126,6 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
   // Build dot at center
   const dotR = thickness * 0.45;
 
-  // Unique IDs for SVG filters (stable per render)
-  const uid = useMemo(() => Math.random().toString(36).slice(2, 8), []);
-  const filterId = `liq-${uid}`;
-  const gradId = `grd-${uid}`;
-
   return (
     <button
       onClick={onClick}
@@ -141,47 +139,20 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
       }}
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        {/* ─── Liquid SVG Filters ─── */}
-        <defs>
-          <linearGradient id={gradId} x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#7DD3FC" />
-            <stop offset="35%" stopColor="#38BDF8" />
-            <stop offset="65%" stopColor="#1CB0F6" />
-            <stop offset="100%" stopColor="#0284C7" />
-          </linearGradient>
-          <filter id={filterId} x="-10%" y="-10%" width="120%" height="120%">
-            <feTurbulence
-              type="fractalNoise"
-              baseFrequency="0.03 0.06"
-              numOctaves="3"
-              seed={7}
-              result="turb"
-            >
-              <animate attributeName="seed" from="0" to="100" dur="4s" repeatCount="indefinite" />
-            </feTurbulence>
-            <feDisplacementMap
-              in="SourceGraphic"
-              in2="turb"
-              scale="3"
-              xChannelSelector="R"
-              yChannelSelector="G"
-            />
-          </filter>
-        </defs>
         {/* Pipe segments (base layer) */}
         {segments.map((d, i) => (
           <path key={i} d={d} stroke={color} strokeWidth={thickness} strokeLinecap="round" fill="none" />
         ))}
-        {/* Liquid-filled segments (on top, with gradient + turbulence filter) */}
+        {/* Liquid-filled segments (on top, with gradient + subtle displacement) */}
         {isFilled && segments.map((d, i) => (
           <path
             key={`liq-${i}`}
             d={d}
-            stroke={`url(#${gradId})`}
+            stroke={`url(#${liquidGradId})`}
             strokeWidth={thickness - 2}
             strokeLinecap="round"
             fill="none"
-            filter={`url(#${filterId})`}
+            filter={`url(#${liquidFilterId})`}
             style={{ animation: 'liquid-shimmer 2s ease-in-out infinite' }}
           />
         ))}
@@ -193,8 +164,8 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
             cx={half}
             cy={half}
             r={dotR + 1}
-            fill={`url(#${gradId})`}
-            filter={`url(#${filterId})`}
+            fill={`url(#${liquidGradId})`}
+            filter={`url(#${liquidFilterId})`}
             style={{ animation: 'liquid-bubble 1.8s ease-in-out infinite' }}
           />
         )}
@@ -261,15 +232,28 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   const currentRound = rounds[state.roundIndex];
   const puzzle = gridRef.current;
 
+  // ─── FIX #5: Initialize puzzle in state so it's available on first render ───
+  const [initialPuzzle] = useState<PipePuzzle | null>(() => {
+    if (rounds.length > 0) {
+      return JSON.parse(JSON.stringify(rounds[0].puzzle));
+    }
+    return null;
+  });
+  const activePuzzle = puzzle ?? initialPuzzle;
+
   // Compute water flow for current puzzle (classic mode uses this)
   const waterFlow = useMemo(() => {
-    if (!puzzle || isFlow) return new Set<string>();
-    return computeWaterFlow(puzzle);
-  }, [puzzle, state.moves, state.flowFilledCells]);
+    if (!activePuzzle || isFlow) return new Set<string>();
+    return computeWaterFlow(activePuzzle);
+  }, [activePuzzle, state.moves, state.flowFilledCells]);
 
   // In flow mode, use flowFilledCells as the "filled" set
   const filledCells = isFlow ? state.flowFilledCells : waterFlow;
-  const isDrainConnected = filledCells.has(`${puzzle?.drainRow},${puzzle?.drainCol}`);
+  const isDrainConnected = filledCells.has(`${activePuzzle?.drainRow},${activePuzzle?.drainCol}`);
+
+  // ─── FIX #1: Shared SVG filter IDs (stable, defined once at grid level) ───
+  const liquidGradId = 'pipe-liquid-grad';
+  const liquidFilterId = 'pipe-liquid-filter';
 
   // ─── End Game ──────────────────────────────────────────────────────────────
 
@@ -352,10 +336,10 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     const s = stateRef.current;
     if (s.phase !== 'playing' || !isFlow) return;
     if (s.flowPaused) return; // paused after dead end
-    if (!puzzle) return;
+    if (!gridRef.current) return;
 
     // Re-trace the flow path from source based on current pipe rotations
-    const steps = traceFlowPath(puzzle);
+    const steps = traceFlowPath(gridRef.current);
     const nextStep = flowStepRef.current + 1;
 
     if (nextStep > steps.length) {
@@ -441,14 +425,21 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         feedback: 'dead_end',
       });
 
-      // Resume flow after pause
+      // Resume flow after pause — FIX #4: DON'T reset to step 0.
+      // The player fixed their pipes; re-trace from source with current pipe positions
+      // but keep the liquid at its current progress level.
       setTimeout(() => {
         if (gameEndedRef.current) return;
         const cur = stateRef.current;
         if (cur.phase === 'playing') {
-          setState({ flowPaused: false, feedback: null });
-          // Reset flow — re-trace from source with new pipe positions
-          flowStepRef.current = 0;
+          // Re-trace path with updated pipe positions, keep current step count
+          const freshSteps = traceFlowPath(gridRef.current!);
+          const newFilledAfterFix = new Set<string>();
+          // Fill cells up to current step on the NEW path
+          for (let i = 0; i < flowStepRef.current && i < freshSteps.length; i++) {
+            newFilledAfterFix.add(`${freshSteps[i].row},${freshSteps[i].col}`);
+          }
+          setState({ flowPaused: false, feedback: null, flowFilledCells: newFilledAfterFix });
         }
       }, FLOW_PAUSE_MS);
       return;
@@ -456,7 +447,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
     // Normal advance — just update filled cells and step
     setState(flowStepUpdate);
-  }, [setState, endGame, isFlow, puzzle]);
+  }, [setState, endGame, isFlow]); // FIX #3: removed `puzzle` from deps — use gridRef.current inside
 
   // ─── Advance Round ──────────────────────────────────────────────────────────
 
@@ -490,9 +481,10 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   const onCellTap = useCallback((row: number, col: number) => {
     const s = stateRef.current;
     if (s.phase !== 'playing' || gameEndedRef.current) return;
-    if (!puzzle) return;
+    const p = gridRef.current;
+    if (!p) return;
 
-    const cell = puzzle.grid[row][col];
+    const cell = p.grid[row][col];
     if (!cell) return;
 
     cell.rotation = (cell.rotation + 1) % 4;
@@ -501,21 +493,24 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
     // In flow mode: rotating a pipe re-traces the flow path
     // The filled cells reset to however far the liquid has gotten on the new path
+    // FIX #3: Use flowStepRef.current (source of truth) instead of s.flowStep (stale state)
     if (isFlow && !s.flowPaused) {
-      const steps = traceFlowPath(puzzle);
+      const steps = traceFlowPath(p);
       const newFilled = new Set<string>();
-      for (let i = 0; i < s.flowStep && i < steps.length; i++) {
+      const currentStep = flowStepRef.current; // read from ref, not state
+      for (let i = 0; i < currentStep && i < steps.length; i++) {
         newFilled.add(`${steps[i].row},${steps[i].col}`);
       }
       setState({ flowFilledCells: newFilled });
     }
 
     // Classic mode: check if solved
-    if (!isFlow && isPuzzleSolved(puzzle)) {
-      const timeTaken = (currentRound?.roundTime ?? 60) - s.roundTime;
+    if (!isFlow && isPuzzleSolved(p)) {
+      const curRound = roundsRef.current[s.roundIndex];
+      const timeTaken = (curRound?.roundTime ?? 60) - s.roundTime;
       const newCombo = s.combo + 1;
       const timeBonus = Math.max(0, Math.floor(s.roundTime * 5));
-      const minMoves = puzzle.gridSize * 2;
+      const minMoves = p.gridSize * 2;
       const efficiency = Math.max(0, Math.floor((1 - newMoves / (minMoves * 4)) * 200));
       const roundScore = 500 + timeBonus + efficiency;
 
@@ -543,15 +538,21 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     }
 
     // Flow mode: check if solved (player might have just completed the path)
-    if (isFlow && isPuzzleSolved(puzzle)) {
+    if (isFlow && isPuzzleSolved(p)) {
       // Don't auto-solve in flow mode — let the liquid reach the drain naturally
-      // But if the flow was paused (dead end), and the player fixes it, resume
+      // But if the flow was paused (dead end), and the player fixes it, unpause
+      // FIX #4: Also don't reset flowStepRef to 0 here!
       if (s.flowPaused) {
-        setState({ flowPaused: false, feedback: null });
-        flowStepRef.current = 0;
+        // Re-trace path with fixed pipes, keep current progress
+        const steps = traceFlowPath(p);
+        const newFilledAfterFix = new Set<string>();
+        for (let i = 0; i < flowStepRef.current && i < steps.length; i++) {
+          newFilledAfterFix.add(`${steps[i].row},${steps[i].col}`);
+        }
+        setState({ flowPaused: false, feedback: null, flowFilledCells: newFilledAfterFix });
       }
     }
-  }, [setState, advanceRound, puzzle, currentRound, isFlow]);
+  }, [setState, advanceRound, isFlow]); // FIX #3: removed `puzzle` and `currentRound` from deps
 
   // ─── Update handlers ref ──────────────────────────────────────────────────
 
@@ -564,7 +565,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   useEffect(() => {
     gameEndedRef.current = false;
     flowStepRef.current = 0;
-    if (rounds.length > 0) {
+    if (rounds.length > 0 && !gridRef.current) {
       gridRef.current = JSON.parse(JSON.stringify(rounds[0].puzzle));
     }
     timerRef.current = setInterval(() => handlersRef.current.tick(), 1000);
@@ -601,6 +602,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         flowFilledCells: new Set(),
         lives: MAX_LIVES,
         flowPaused: false,
+        flowStep: 0,
       });
       // Start/restart flow timer for this round
       if (isFlow) {
@@ -627,8 +629,8 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   // ─── Grid sizing ────────────────────────────────────────────────────────────
 
   const gridContainerSize = Math.min(360, typeof window !== 'undefined' ? window.innerWidth - 48 : 360);
-  const cellSize = puzzle ? Math.floor(gridContainerSize / puzzle.gridSize) : 60;
-  const actualGridSize = puzzle ? cellSize * puzzle.gridSize : 0;
+  const cellSize = activePuzzle ? Math.floor(gridContainerSize / activePuzzle.gridSize) : 60;
+  const actualGridSize = activePuzzle ? cellSize * activePuzzle.gridSize : 0;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // RENDER
@@ -746,16 +748,16 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
   // ─── Main Playing UI ────────────────────────────────────────────────────────
 
-  if (!puzzle || !currentRound) return null;
+  if (!activePuzzle || !currentRound) return null;
 
   const modeColor = isFlow ? WATER_COLOR : ACCENT;
   const modeLabel = isFlow ? 'FLOW' : 'PIPE';
 
   // Flow mode: render the leading-edge glow on the frontier cell
   const renderFrontierGlow = () => {
-    if (!isFlow || state.flowFilledCells.size === 0 || state.flowPaused || !puzzle) return null;
-    const steps = traceFlowPath(puzzle);
-    const frontierIdx = Math.min(state.flowStep, steps.length - 1);
+    if (!isFlow || state.flowFilledCells.size === 0 || state.flowPaused || !activePuzzle) return null;
+    const steps = traceFlowPath(activePuzzle);
+    const frontierIdx = Math.min(flowStepRef.current, steps.length - 1);
     if (frontierIdx < 0 || frontierIdx >= steps.length) return null;
     const f = steps[frontierIdx];
     if (f.reachedDrain || f.isDeadEnd) return null;
@@ -863,18 +865,49 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         className="relative rounded-2xl p-2"
         style={{ width: actualGridSize + 16, height: actualGridSize + 16, background: GRID_BG }}
       >
+        {/* ── FIX #1: Single shared SVG defs block for all cells ── */}
+        <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
+          <defs>
+            <linearGradient id={liquidGradId} x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#7DD3FC" />
+              <stop offset="35%" stopColor="#38BDF8" />
+              <stop offset="65%" stopColor="#1CB0F6" />
+              <stop offset="100%" stopColor="#0284C7" />
+            </linearGradient>
+            {/* FIX #1: Single shared filter — no more per-cell feTurbulence.
+                Reduced octaves (2 instead of 3), scale=1.5 (was 3),
+                and NO animated seed for massive perf improvement. */}
+            <filter id={liquidFilterId} x="-5%" y="-5%" width="110%" height="110%">
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.04 0.08"
+                numOctaves="2"
+                seed={42}
+                result="turb"
+              />
+              <feDisplacementMap
+                in="SourceGraphic"
+                in2="turb"
+                scale="1.5"
+                xChannelSelector="R"
+                yChannelSelector="G"
+              />
+            </filter>
+          </defs>
+        </svg>
+
         {/* Grid lines (subtle) */}
         <div className="absolute inset-2 rounded-xl overflow-hidden" style={{ opacity: 0.3 }}>
-          {Array.from({ length: puzzle.gridSize + 1 }).map((_, i) => (
+          {Array.from({ length: activePuzzle.gridSize + 1 }).map((_, i) => (
             <div key={`h-${i}`} className="absolute bg-[#CCC]" style={{ left: 0, right: 0, top: i * cellSize, height: 1 }} />
           ))}
-          {Array.from({ length: puzzle.gridSize + 1 }).map((_, i) => (
+          {Array.from({ length: activePuzzle.gridSize + 1 }).map((_, i) => (
             <div key={`v-${i}`} className="absolute bg-[#CCC]" style={{ top: 0, bottom: 0, left: i * cellSize, width: 1 }} />
           ))}
         </div>
 
         {/* Pipe cells */}
-        {puzzle.grid.map((row, r) =>
+        {activePuzzle.grid.map((row, r) =>
           row.map((cell, c) => {
             const isFilled = filledCells.has(`${r},${c}`);
             return (
@@ -889,6 +922,8 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
                   isDrain={cell.isDrain}
                   isDrainConnected={isDrainConnected}
                   onClick={() => handlersRef.current.onCellTap(r, c)}
+                  liquidGradId={liquidGradId}
+                  liquidFilterId={liquidFilterId}
                 />
               </div>
             );
@@ -900,13 +935,13 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
         {/* Source label */}
         <div className="absolute flex items-center justify-center"
-          style={{ left: -6, top: 8 + puzzle.sourceRow * cellSize + cellSize / 2, transform: 'translate(-100%, -50%)' }}>
+          style={{ left: -6, top: 8 + activePuzzle.sourceRow * cellSize + cellSize / 2, transform: 'translate(-100%, -50%)' }}>
           <span className="text-xs font-bold px-1.5 py-0.5 rounded-full text-white" style={{ background: SOURCE_COLOR }}>IN</span>
         </div>
 
         {/* Drain label */}
         <div className="absolute flex items-center justify-center"
-          style={{ left: actualGridSize + 14, top: 8 + puzzle.drainRow * cellSize + cellSize / 2, transform: 'translateY(-50%)' }}>
+          style={{ left: actualGridSize + 14, top: 8 + activePuzzle.drainRow * cellSize + cellSize / 2, transform: 'translateY(-50%)' }}>
           <span className="text-xs font-bold px-1.5 py-0.5 rounded-full text-white" style={{ background: isDrainConnected ? SOURCE_COLOR : DRAIN_COLOR }}>OUT</span>
         </div>
       </div>
