@@ -653,7 +653,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
             <span className="text-3xl">{introIcon}</span>
           </div>
           <h2 className="text-2xl font-extrabold text-[#333]">Round {state.roundIndex + 1}</h2>
-          <p className="text-base text-[#999] mt-2">{sz}\u00d7{sz} Grid{!isFlow ? ` · ${currentRound.roundTime}s` : ''}</p>
+          <p className="text-base text-[#999] mt-2">{`${sz}×${sz}`} Grid{!isFlow ? ` · ${currentRound.roundTime}s` : ''}</p>
           <div className="flex items-center justify-center gap-2 mt-2">
             <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white" style={{ background: introColor }}>
               {introLabel}
