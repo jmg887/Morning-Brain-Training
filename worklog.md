@@ -1,28 +1,22 @@
 ---
 Task ID: 1
 Agent: main
-Task: Increase Pipe Flow session time + Add realistic liquid SVG rendering
+Task: Deep dive into Pipe Flow bugs and fix all of them
 
 Work Log:
-- Read full PipeFlow.tsx (882 lines) and pipeGenerator.ts (510 lines)
-- Updated GLOBAL_TIME: 240 → 420 (4min → 7min session)
-- Updated FLOW_TICK_MS: 1200 → 1500 (slower liquid, more think time)
-- Updated FLOW_PAUSE_MS: 2000 → 2500 (longer pause after dead end)
-- Updated ROUND_CONFIGS in pipeGenerator.ts: 60/75/65/90 → 90/105/95/120
-- Added SVG liquid rendering to PipeCellRender:
-  - <linearGradient> with 4-stop glossy blue gradient (#7DD3FC → #0284C7)
-  - <feTurbulence> + <feDisplacementMap> filter for wavy liquid surface
-  - Animated turbulence seed (0→100 over 4s) for continuous organic motion
-  - Liquid overlay paths using gradient stroke + turbulence filter
-  - Center bubble glow with pulsing animation
-  - Enhanced boxShadow on filled cells (outer glow + inner glow)
-- Added CSS keyframes: liquid-shimmer (opacity pulse) and liquid-bubble (glow pulse)
-- Used useMemo for stable per-cell SVG filter IDs
-- TypeScript compilation: passed (npx tsc --noEmit)
-- Dev server: compiles successfully, no runtime errors
+- Read full PipeFlow.tsx (946 lines), pipeGenerator.ts (510 lines), useGameStore.ts, and related files
+- Identified 5 bugs through systematic code analysis
+- Bug #1 (CRITICAL): 16-36 independent animated feTurbulence SVG filters per grid — catastrophic mobile performance
+- Bug #2 (HIGH): Flow mode dead-end resets liquid progress to step 0
+- Bug #3 (MEDIUM): Stale closure over `puzzle` in flowTick/onCellTap callbacks
+- Bug #4 (MEDIUM): onCellTap reads s.flowStep (stale state) instead of flowStepRef.current
+- Bug #5 (LOW): puzzle is null on first render (gridRef.current not yet set)
+- Rewrote PipeFlow.tsx with all fixes: shared SVG defs, proper ref usage, no flow progress loss
+- Verified TypeScript compiles cleanly (no errors)
+- Pushed to GitHub: commit 91f6712
 
 Stage Summary:
-- Session time increased ~75% across all timers
-- Liquid now uses SVG turbulence filters for realistic wavy/flowing appearance
-- Both Classic and Flow modes get the liquid visual treatment
-- No breaking changes to game logic
+- Fixed 5 bugs in PipeFlow.tsx (109 insertions, 74 deletions)
+- Primary fix: moved per-cell animated SVG filters to a single shared defs block
+- Secondary fix: flow mode no longer loses all progress on dead-end
+- Pushed to https://github.com/jmg887/Morning-Brain-Training.git (main)
