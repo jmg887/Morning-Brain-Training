@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useGameStore, type GameType, type Screen } from '@/store/useGameStore';
+import { useGameStore, type GameType, type Screen, type GameDifficulty } from '@/store/useGameStore';
 import { getDayNumber } from '@/lib/seededRandom';
 
 const exercises = [
@@ -210,12 +210,29 @@ export default function HomeScreen() {
 }
 
 function ExerciseCard({ exercise }: { exercise: typeof exercises[0] }) {
-  const { setScreen, gamesCompleted } = useGameStore();
+  const { setScreen, gamesCompleted, wordDifficulty } = useGameStore();
   const isDone = gamesCompleted.includes(exercise.id);
+
+  // Word Fusion has a difficulty picker pre-screen
+  const handleClick = () => {
+    if (exercise.id === 'word') {
+      setScreen('word_picker' as Screen);
+    } else {
+      setScreen(exercise.id);
+    }
+  };
+
+  // Difficulty badge config
+  const DIFFICULTY_BADGE: Record<GameDifficulty, { label: string; color: string; bg: string }> = {
+    beginner: { label: 'Beginner', color: '#58CC02', bg: '#F0FAE0' },
+    intermediate: { label: 'Mid', color: '#FF9600', bg: '#FFF5E6' },
+    pro: { label: 'Pro', color: '#FF3B30', bg: '#FFE8E5' },
+  };
+  const badge = exercise.id === 'word' ? DIFFICULTY_BADGE[wordDifficulty] : null;
 
   return (
     <button
-      onClick={() => setScreen(exercise.id)}
+      onClick={handleClick}
       className="w-full bg-white rounded-2xl p-4 flex items-center gap-3.5 text-left transition-all active:scale-[0.98]"
       style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.05)', borderLeft: `4px solid ${exercise.color}`, opacity: isDone ? 0.6 : 1 }}
     >
@@ -225,6 +242,12 @@ function ExerciseCard({ exercise }: { exercise: typeof exercises[0] }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-[15px] font-bold text-[#333]">{exercise.name}</span>
+          {badge && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+              style={{ color: badge.color, backgroundColor: badge.bg }}>
+              {badge.label}
+            </span>
+          )}
           {isDone && (
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58CC02" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="20 6 9 17 4 12"/>
@@ -246,7 +269,14 @@ function StartSessionButton({ checkAndUpdateStreak }: { checkAndUpdateStreak: ()
 
   const handleStart = () => {
     checkAndUpdateStreak();
-    if (nextGame) setScreen(nextGame as Screen);
+    if (nextGame) {
+      // Word Fusion goes through difficulty picker
+      if (nextGame === 'word') {
+        setScreen('word_picker' as Screen);
+      } else {
+        setScreen(nextGame as Screen);
+      }
+    }
   };
 
   return (

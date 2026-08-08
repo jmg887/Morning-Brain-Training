@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useGameStore } from '@/store/useGameStore';
+import { useGameStore, type GameDifficulty } from '@/store/useGameStore';
 import { generateRules } from '@/lib/wordRuleGenerator';
-import { generateScramblePuzzles, MODE_INFO } from '@/lib/scrambleModes';
-import type { ScrambleMode, ScramblePuzzle } from '@/lib/scrambleModes';
+import { generateScramblePuzzles, MODE_INFO, pickScrambleModes, type ScrambleMode } from '@/lib/scrambleModes';
+import type { ScramblePuzzle } from '@/lib/scrambleModes';
 import { dateToSeed, getTodaySeedStr, createSeededRandom } from '@/lib/seededRandom';
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
@@ -68,13 +68,76 @@ interface PlayState {
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
 
-const PHASES: PhaseDef[] = [
-  { name: 'Rule Finder', subtitle: 'Find words matching a hidden rule', color: '#CE82FF', roundTime: 45 },
-  { name: 'Letter Scramble', subtitle: 'Unscramble letters to form words', color: '#FF9600', roundTime: 40 },
-  { name: 'Mixed Blitz', subtitle: 'Both modes \u2014 faster pace!', color: '#FF3B30', roundTime: 35 },
-];
+// ─── Difficulty Configuration ──────────────────────────────────────────────────
 
-const GLOBAL_TIME = 180;
+interface DifficultyConfig {
+  globalTime: number;
+  phases: PhaseDef[];
+  totalRounds: number; // how many rounds to build
+  ruleCount: number;
+  scrambleCount: number;
+  allowedScrambleModes: ScrambleMode[];
+  showExampleWords: boolean;
+  alwaysShowWordCounter: boolean;
+  comboForgiving: boolean; // wrong answer doesn't reset combo
+  scoreMultiplier: number;
+}
+
+function getDifficultyConfig(difficulty: GameDifficulty): DifficultyConfig {
+  switch (difficulty) {
+    case 'beginner':
+      return {
+        globalTime: 240,
+        phases: [
+          { name: 'Rule Finder', subtitle: 'Find words matching a hidden rule', color: '#CE82FF', roundTime: 60 },
+          { name: 'Letter Scramble', subtitle: 'Unscramble letters to form words', color: '#FF9600', roundTime: 55 },
+        ],
+        totalRounds: 4,
+        ruleCount: 2,
+        scrambleCount: 2,
+        allowedScrambleModes: ['classic', 'category'],
+        showExampleWords: true,
+        alwaysShowWordCounter: true,
+        comboForgiving: true,
+        scoreMultiplier: 0.5,
+      };
+    case 'pro':
+      return {
+        globalTime: 150,
+        phases: [
+          { name: 'Rule Finder', subtitle: 'Find words matching a hidden rule', color: '#CE82FF', roundTime: 35 },
+          { name: 'Letter Scramble', subtitle: 'Unscramble letters to form words', color: '#FF9600', roundTime: 30 },
+          { name: 'Mixed Blitz', subtitle: 'Both modes \u2014 faster pace!', color: '#FF3B30', roundTime: 25 },
+        ],
+        totalRounds: 6,
+        ruleCount: 3,
+        scrambleCount: 3,
+        allowedScrambleModes: ['classic', 'lengthLock', 'hiddenTarget', 'category'],
+        showExampleWords: false,
+        alwaysShowWordCounter: false,
+        comboForgiving: false,
+        scoreMultiplier: 1.5,
+      };
+    case 'intermediate':
+    default:
+      return {
+        globalTime: 180,
+        phases: [
+          { name: 'Rule Finder', subtitle: 'Find words matching a hidden rule', color: '#CE82FF', roundTime: 45 },
+          { name: 'Letter Scramble', subtitle: 'Unscramble letters to form words', color: '#FF9600', roundTime: 40 },
+          { name: 'Mixed Blitz', subtitle: 'Both modes \u2014 faster pace!', color: '#FF3B30', roundTime: 35 },
+        ],
+        totalRounds: 6,
+        ruleCount: 3,
+        scrambleCount: 3,
+        allowedScrambleModes: ['classic', 'lengthLock', 'hiddenTarget', 'category'],
+        showExampleWords: true,
+        alwaysShowWordCounter: false,
+        comboForgiving: false,
+        scoreMultiplier: 1.0,
+      };
+  }
+}
 const TILE_SIZE_RULE = 46;
 const TILE_SIZE_ANAGRAM = 50;
 const ANAGRAM_WORD_SCORES: Record<number, number> = { 3: 100, 4: 250, 5: 500, 6: 1000, 7: 2000 };
@@ -91,20 +154,26 @@ function shuffleArray<T>(array: T[]): T[] {
   return arr;
 }
 
-function generateFusionRounds(seed?: number): FusionRound[] {
+function generateFusionRounds(seed?: number, difficulty: GameDifficulty = 'intermediate'): FusionRound[] {
+  const cfg = getDifficultyConfig(difficulty);
   const ruleSeed = seed !== undefined ? seed : undefined;
   const anagramSeed = seed !== undefined ? seed + 1000 : undefined;
   // RNG for example word selection
   const exampleRng = seed !== undefined ? createSeededRandom(seed + 5000) : () => Math.random();
 
-  const ruleRounds = generateRules(3, ruleSeed);
-  // Generate 3 scramble puzzles with rotating modes
-  const scramblePuzzles = generateScramblePuzzles(3, anagramSeed ?? Date.now());
+  const ruleRounds = generateRules(cfg.ruleCount, ruleSeed);
+  // Generate scramble puzzles with allowed modes for this difficulty
+  const scramblePuzzles = generateScramblePuzzles(
+    cfg.scrambleCount,
+    anagramSeed ?? Date.now(),
+    cfg.allowedScrambleModes
+  );
 
   const rounds: FusionRound[] = [];
 
   // Helper: pick an example word for the round (for player priming)
   const pickExampleWord = (round: FusionRound, rng: () => number): string | undefined => {
+    if (!cfg.showExampleWords) return undefined;
     if (round.type === 'rule') return round.validWords[Math.floor(rng() * round.validWords.length)];
     if (round.type === 'anagram') {
       if (round.scrambleMode === 'classic' || round.scrambleMode === 'category') {
@@ -133,8 +202,10 @@ function generateFusionRounds(seed?: number): FusionRound[] {
     }
   };
 
-  // Phase 0: 2 rule rounds
-  for (let i = 0; i < 2 && i < ruleRounds.length; i++) {
+  // Build rounds based on difficulty config
+  // Phase 0: Rule rounds
+  const phase0RuleCount = cfg.phases.length > 0 ? Math.min(cfg.ruleCount, cfg.phases[0] ? Math.ceil(cfg.ruleCount * 0.6) : cfg.ruleCount) : cfg.ruleCount;
+  for (let i = 0; i < phase0RuleCount && i < ruleRounds.length; i++) {
     const r = ruleRounds[i];
     const round: FusionRound = {
       type: 'rule',
@@ -142,67 +213,75 @@ function generateFusionRounds(seed?: number): FusionRound[] {
       shuffledLetters: shuffleArray(r.letters),
       clue: r.description,
       validWords: r.validWords,
-      roundTime: PHASES[0].roundTime,
+      roundTime: cfg.phases[0].roundTime,
       phase: 0,
     };
     round.exampleWord = pickExampleWord(round, exampleRng);
     rounds.push(round);
   }
 
-  // Phase 1: 2 scramble rounds (modes rotate)
-  for (let i = 0; i < 2 && i < scramblePuzzles.length; i++) {
-    const p = scramblePuzzles[i];
-    const round: FusionRound = {
-      type: 'anagram',
-      letters: p.letters,
-      shuffledLetters: [...p.letters],
-      clue: getScrambleHint(p),
-      validWords: p.validWords,
-      roundTime: PHASES[1].roundTime,
-      phase: 1,
-      scrambleMode: p.mode,
-      scrambleHint: getScrambleHint(p),
-      hiddenTarget: p.hiddenTarget,
-      categoryLabel: p.categoryLabel,
-      lockedLength: p.lockedLength,
-    };
-    round.exampleWord = pickExampleWord(round, exampleRng);
-    rounds.push(round);
+  // Phase 1: Scramble rounds
+  if (cfg.phases.length > 1) {
+    const phase1ScrambleCount = Math.min(cfg.scrambleCount, Math.ceil(cfg.scrambleCount * 0.6));
+    for (let i = 0; i < phase1ScrambleCount && i < scramblePuzzles.length; i++) {
+      const p = scramblePuzzles[i];
+      const round: FusionRound = {
+        type: 'anagram',
+        letters: p.letters,
+        shuffledLetters: [...p.letters],
+        clue: getScrambleHint(p),
+        validWords: p.validWords,
+        roundTime: cfg.phases[1].roundTime,
+        phase: 1,
+        scrambleMode: p.mode,
+        scrambleHint: getScrambleHint(p),
+        hiddenTarget: p.hiddenTarget,
+        categoryLabel: p.categoryLabel,
+        lockedLength: p.lockedLength,
+      };
+      round.exampleWord = pickExampleWord(round, exampleRng);
+      rounds.push(round);
+    }
   }
 
-  // Phase 2: 1 rule + 1 scramble (if available)
-  if (ruleRounds.length > 2) {
-    const ruleR = ruleRounds[2];
-    const round: FusionRound = {
-      type: 'rule',
-      letters: ruleR.letters,
-      shuffledLetters: shuffleArray(ruleR.letters),
-      clue: ruleR.description,
-      validWords: ruleR.validWords,
-      roundTime: PHASES[2].roundTime,
-      phase: 2,
-    };
-    round.exampleWord = pickExampleWord(round, exampleRng);
-    rounds.push(round);
-  }
-  if (scramblePuzzles.length > 2) {
-    const p = scramblePuzzles[2];
-    const round: FusionRound = {
-      type: 'anagram',
-      letters: p.letters,
-      shuffledLetters: [...p.letters],
-      clue: getScrambleHint(p),
-      validWords: p.validWords,
-      roundTime: PHASES[2].roundTime,
-      phase: 2,
-      scrambleMode: p.mode,
-      scrambleHint: getScrambleHint(p),
-      hiddenTarget: p.hiddenTarget,
-      categoryLabel: p.categoryLabel,
-      lockedLength: p.lockedLength,
-    };
-    round.exampleWord = pickExampleWord(round, exampleRng);
-    rounds.push(round);
+  // Phase 2: Mixed Blitz (intermediate/pro only — 1 rule + remaining scrambles)
+  if (cfg.phases.length > 2) {
+    // Remaining rule rounds
+    for (let i = phase0RuleCount; i < cfg.ruleCount && i < ruleRounds.length; i++) {
+      const ruleR = ruleRounds[i];
+      const round: FusionRound = {
+        type: 'rule',
+        letters: ruleR.letters,
+        shuffledLetters: shuffleArray(ruleR.letters),
+        clue: ruleR.description,
+        validWords: ruleR.validWords,
+        roundTime: cfg.phases[2].roundTime,
+        phase: 2,
+      };
+      round.exampleWord = pickExampleWord(round, exampleRng);
+      rounds.push(round);
+    }
+    // Remaining scramble rounds
+    const phase1ScrambleCount = Math.min(cfg.scrambleCount, Math.ceil(cfg.scrambleCount * 0.6));
+    for (let i = phase1ScrambleCount; i < cfg.scrambleCount && i < scramblePuzzles.length; i++) {
+      const p = scramblePuzzles[i];
+      const round: FusionRound = {
+        type: 'anagram',
+        letters: p.letters,
+        shuffledLetters: [...p.letters],
+        clue: getScrambleHint(p),
+        validWords: p.validWords,
+        roundTime: cfg.phases[2].roundTime,
+        phase: 2,
+        scrambleMode: p.mode,
+        scrambleHint: getScrambleHint(p),
+        hiddenTarget: p.hiddenTarget,
+        categoryLabel: p.categoryLabel,
+        lockedLength: p.lockedLength,
+      };
+      round.exampleWord = pickExampleWord(round, exampleRng);
+      rounds.push(round);
+    }
   }
 
   return rounds;
@@ -210,12 +289,12 @@ function generateFusionRounds(seed?: number): FusionRound[] {
 
 // ─── Initial State ──────────────────────────────────────────────────────────────
 
-function createInitialState(): PlayState {
+function createInitialState(cfg: DifficultyConfig): PlayState {
   return {
     phase: 'phase_intro',
     roundIndex: 0,
-    globalTime: GLOBAL_TIME,
-    roundTime: PHASES[0].roundTime,
+    globalTime: cfg.globalTime,
+    roundTime: cfg.phases[0].roundTime,
     selectedIndices: [],
     foundWords: [],
     combo: 0,
@@ -248,17 +327,21 @@ interface WordFusionProps {
 }
 
 export default function WordFusion({ isDaily = false }: WordFusionProps) {
+  // ── Difficulty config (daily always uses intermediate) ──
+  const activeDifficulty = isDaily ? 'intermediate' as GameDifficulty : useGameStore.getState().wordDifficulty;
+  const diffCfg = getDifficultyConfig(activeDifficulty);
+
   // ── Generate rounds (stable across renders) ──
   const [rounds] = useState<FusionRound[]>(() => {
     if (isDaily) {
       const seed = dateToSeed(getTodaySeedStr());
-      return generateFusionRounds(seed);
+      return generateFusionRounds(seed, 'intermediate');
     }
-    return generateFusionRounds();
+    return generateFusionRounds(undefined, activeDifficulty);
   });
   const totalRounds = rounds.length;
 
-  const [state, setStateRaw] = useState<PlayState>(createInitialState);
+  const [state, setStateRaw] = useState<PlayState>(() => createInitialState(diffCfg));
   const setState = useCallback(
     (partial: Partial<PlayState>) => setStateRaw((prev) => ({ ...prev, ...partial })),
     []
@@ -285,7 +368,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
   const currentRound = rounds[state.roundIndex];
   const currentLetters = shuffledRef.current[state.roundIndex];
   const currentWord = state.selectedIndices.map((i) => currentLetters[i]).join('').toLowerCase();
-  const phaseColor = currentRound ? PHASES[currentRound.phase].color : '#CE82FF';
+  const phaseColor = currentRound ? diffCfg.phases[currentRound.phase]?.color ?? '#CE82FF' : '#CE82FF';
 
   // ─── Typewriter ──────────────────────────────────────────────────────────────
 
@@ -330,16 +413,27 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
       roundScores.push(0);
     }
 
+      // Compute suggested difficulty
+      let suggestedDifficulty: GameDifficulty | undefined;
+      if (!isDaily) {
+        if (accuracy >= 85 && activeDifficulty === 'beginner') suggestedDifficulty = 'intermediate';
+        else if (accuracy >= 90 && activeDifficulty === 'intermediate') suggestedDifficulty = 'pro';
+        else if (accuracy < 40 && activeDifficulty === 'pro') suggestedDifficulty = 'intermediate';
+        else if (accuracy < 40 && activeDifficulty === 'intermediate') suggestedDifficulty = 'beginner';
+      }
+
     useGameStore.getState().completeSession({
       game: 'word',
-      score: s.score,
+      score: Math.round(s.score * diffCfg.scoreMultiplier),
       stars,
       accuracy,
       bestCombo: s.bestCombo,
-      timeElapsed: GLOBAL_TIME - s.globalTime,
+      timeElapsed: diffCfg.globalTime - s.globalTime,
       isDaily,
       extra: s.totalWordsFound + ' words',
       roundScores: isDaily ? roundScores : undefined,
+      difficulty: isDaily ? undefined : activeDifficulty,
+      suggestedDifficulty,
     });
   }, [isDaily, totalRounds]);
 
@@ -547,7 +641,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
           setState({
             phase: 'round_transition',
             roundTime: 0,
-            globalTime: Math.min(cur.globalTime + timeBonus, GLOBAL_TIME),
+            globalTime: Math.min(cur.globalTime + timeBonus, diffCfg.globalTime),
             ...roundSave,
             lastRoundFound: cur.foundWords.length,
             lastRoundType: round.type,
@@ -561,7 +655,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
       }
     } else {
       setState({
-        combo: 0,
+        combo: diffCfg.comboForgiving ? s.combo : 0,
         totalAttempts: newTotalAttempts,
         feedback: 'wrong',
         feedbackWord: word,
@@ -571,7 +665,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
       });
       setTimeout(() => { if (!gameEndedRef.current) setState({ feedback: null, feedbackWord: '' }); }, FEEDBACK_CLEAR_DELAY);
     }
-  }, [setState, saveRoundWords, advanceRound]);
+  }, [setState, saveRoundWords, advanceRound, diffCfg.comboForgiving]);
 
   const onClear = useCallback(() => {
     const s = stateRef.current;
@@ -652,12 +746,13 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
 
   // ─── Derived ─────────────────────────────────────────────────────────────────
 
-  const timerPct = (state.globalTime / GLOBAL_TIME) * 100;
+  const timerPct = (state.globalTime / diffCfg.globalTime) * 100;
   const timerColor = timerPct > 50 ? '#58CC02' : timerPct > 20 ? '#FF9600' : '#FF3B30';
   const roundTimerPct = currentRound ? (state.roundTime / currentRound.roundTime) * 100 : 0;
   const roundTimerColor = roundTimerPct > 50 ? phaseColor : roundTimerPct > 20 ? '#FF9600' : '#FF3B30';
   const showWordCounter = state.phase === 'playing' && currentRound && (
-    currentRound.type === 'rule' ? currentRound.validWords.length <= 10 : currentRound.validWords.length <= 15
+    diffCfg.alwaysShowWordCounter ||
+    (currentRound.type === 'rule' ? currentRound.validWords.length <= 10 : currentRound.validWords.length <= 15)
   );
   const allFound = currentRound ? state.foundWords.length === currentRound.validWords.length : false;
 
@@ -696,7 +791,7 @@ export default function WordFusion({ isDaily = false }: WordFusionProps) {
   // ─── Phase Intro Overlay ─────────────────────────────────────────────────────
 
   if (state.phase === 'phase_intro' && currentRound) {
-    const pd = PHASES[currentRound.phase];
+    const pd = diffCfg.phases[currentRound.phase];
     return (
       <div className="min-h-[100dvh] flex flex-col items-center justify-center px-5"
         style={{ background: `linear-gradient(180deg, ${pd.color}15 0%, #F9F9F9 100%)` }}>

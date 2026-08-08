@@ -365,7 +365,18 @@ export function generateScramblePuzzles(
   seed: number,
   modes?: ScrambleMode[]
 ): ScramblePuzzle[] {
-  const resolvedModes = modes ?? pickScrambleModes(count, seed);
+  const resolvedModes: ScrambleMode[] = modes
+    ? (() => {
+        // Shuffle the allowed modes with the seed, then cycle to fill count
+        const rng = createSeededRandom(seed + 777);
+        const shuffled = seededShuffle(modes, rng);
+        const result: ScrambleMode[] = [];
+        for (let i = 0; i < count; i++) {
+          result.push(shuffled[i % shuffled.length]);
+        }
+        return result;
+      })()
+    : pickScrambleModes(count, seed);
   const puzzles: ScramblePuzzle[] = [];
   const usedBases: string[] = [];
 

@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type Screen = 'home' | 'memory' | 'word' | 'math' | 'circuit' | 'oddone' | 'pipe' | 'daily' | 'score';
+export type Screen = 'home' | 'memory' | 'word' | 'math' | 'circuit' | 'oddone' | 'pipe' | 'daily' | 'score' | 'word_picker';
 export type GameType = 'memory' | 'word' | 'math' | 'circuit' | 'oddone' | 'pipe';
+export type GameDifficulty = 'beginner' | 'intermediate' | 'pro';
+export type DifficultyCapableGame = Extract<GameType, 'word'>; // games that support difficulty
 
 export interface SessionResults {
   game: GameType;
@@ -13,8 +15,11 @@ export interface SessionResults {
   timeElapsed: number;
   isDaily: boolean;
   extra?: string;
-  roundScores?: number[]; // words found per round (for daily share card)
-  circuitLevel?: number; // level at time of play (for progression)
+  roundScores?: number[];
+  circuitLevel?: number;
+  difficulty?: GameDifficulty;
+  /** Suggested difficulty change after session (if accuracy suggests it) */
+  suggestedDifficulty?: GameDifficulty;
 }
 
 interface GameState {
@@ -32,7 +37,11 @@ interface GameState {
   dailyWordCompleted: string | null; // date string e.g. '2026-08-03'
   circuitLevel: number;
   circuitHistory: { stars: number; level: number }[];
-  advanceCircuitLevel: (stars: number) => number; // returns new level
+  // Per-game difficulty settings
+  wordDifficulty: GameDifficulty;
+  setGameDifficulty: (game: DifficultyCapableGame, difficulty: GameDifficulty) => void;
+  getGameDifficulty: (game: DifficultyCapableGame) => GameDifficulty;
+  advanceCircuitLevel: (stars: number) => number;
   completeSession: (results: SessionResults) => void;
   resetSession: () => void;
   checkAndUpdateStreak: () => void;
@@ -70,6 +79,15 @@ export const useGameStore = create<GameState>()(
       dailyWordCompleted: null,
       circuitLevel: 1,
       circuitHistory: [],
+      wordDifficulty: 'intermediate' as GameDifficulty,
+
+      setGameDifficulty: (game, difficulty) => {
+        if (game === 'word') set({ wordDifficulty: difficulty });
+      },
+      getGameDifficulty: (game) => {
+        if (game === 'word') return get().wordDifficulty;
+        return 'intermediate';
+      },
 
       completeSession: (results) => {
         const state = get();
@@ -185,6 +203,7 @@ export const useGameStore = create<GameState>()(
         dailyWordCompleted: state.dailyWordCompleted,
         circuitLevel: state.circuitLevel,
         circuitHistory: state.circuitHistory,
+        wordDifficulty: state.wordDifficulty,
       }),
     }
   )

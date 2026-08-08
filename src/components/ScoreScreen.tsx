@@ -1,15 +1,21 @@
 'use client';
 
-import { useGameStore } from '@/store/useGameStore';
+import { useGameStore, type GameDifficulty } from '@/store/useGameStore';
 import { getDayNumber } from '@/lib/seededRandom';
 
 const GAME_INFO: Record<string, { name: string; icon: string; color: string }> = {
-  memory: { name: 'Memory Match', icon: '🧠', color: '#58CC02' },
-  word: { name: 'Word Fusion', icon: '📝', color: '#CE82FF' },
+  memory: { name: 'Memory Match', icon: '⭐', color: '#58CC02' },
+  word: { name: 'Word Fusion', icon: '⭐', color: '#CE82FF' },
   math: { name: 'Math Sprint', icon: '⚡', color: '#1CB0F6' },
-  circuit: { name: 'Circuit Connect', icon: '🌐', color: '#FF9600' },
-  oddone: { name: 'Odd One Out', icon: '🌀', color: '#00BFA6' },
-  pipe: { name: 'Pipe Flow', icon: '🔧', color: '#FF9600' },
+  circuit: { name: 'Circuit Connect', icon: '⭐', color: '#FF9600' },
+  oddone: { name: 'Odd One Out', icon: '⭐', color: '#00BFA6' },
+  pipe: { name: 'Pipe Flow', icon: '⭐', color: '#FF9600' },
+};
+
+const DIFFICULTY_LABELS: Record<GameDifficulty, { label: string; color: string; bg: string }> = {
+  beginner: { label: 'Beginner', color: '#58CC02', bg: '#F0FAE0' },
+  intermediate: { label: 'Intermediate', color: '#FF9600', bg: '#FFF5E6' },
+  pro: { label: 'Pro', color: '#FF3B30', bg: '#FFE8E5' },
 };
 
 // Build a Wordle-style visual grid for daily share card
@@ -42,17 +48,20 @@ export default function ScoreScreen() {
   const xpProg = getXPProgress();
   const xpGained = Math.round(r.score * 0.5) + r.stars * 20;
 
+  // Pre-resolve difficulty labels for type safety
+  const diffLabel = r.difficulty ? DIFFICULTY_LABELS[r.difficulty] : null;
+  const suggestedDiff = r.suggestedDifficulty ? DIFFICULTY_LABELS[r.suggestedDifficulty] : null;
+
   const handleShare = async () => {
-    const starsStr = r.stars === 3 ? '⭐⭐⭐' : r.stars === 2 ? '⭐⭐' : r.stars >= 1 ? '⭐' : '';
+    const starsStr = r.stars === 3 ? '\u2b50\u2b50\u2b50' : r.stars === 2 ? '\u2b50\u2b50' : r.stars >= 1 ? '\u2b50' : '';
     let text: string;
     if (r.isDaily) {
       const grid = r.roundScores ? buildDailyGrid(r.roundScores) : '';
-      text = `🧠 BrainTrain #${getDayNumber()}
-${starsStr}  ${r.score}pts${r.extra ? ' | ' + r.extra : ''}`;
+      text = `BrainTrain #${getDayNumber()}\n${starsStr}  ${r.score}pts${r.extra ? ' | ' + r.extra : ''}`;
       if (grid) text += '\n\n' + grid;
-      text += `\n\n🔥 ${streak}-day streak`;
+      text += `\n\n${streak}-day streak`;
     } else {
-      text = `🧠 BrainTrain - ${info.name}\n${starsStr}  ${r.score}pts\nAccuracy: ${Math.round(r.accuracy)}% | Best Combo: \u00d7${r.bestCombo}${r.extra ? ' | ' + r.extra : ''}`;
+      text = `BrainTrain - ${info.name}\n${starsStr}  ${r.score}pts\nAccuracy: ${Math.round(r.accuracy)}% | Best Combo: x${r.bestCombo}${r.extra ? ' | ' + r.extra : ''}`;
     }
     if (navigator.share) {
       try { await navigator.share({ title: 'BrainTrain', text }); } catch {}
@@ -73,7 +82,15 @@ ${starsStr}  ${r.score}pts${r.extra ? ' | ' + r.extra : ''}`;
         <div className="text-center mt-8">
           <div className="text-5xl mb-2">{info.icon}</div>
           <h1 className="text-2xl font-bold text-[#333]">{info.name}</h1>
-          <p className="text-sm mt-1" style={{ color: r.isDaily ? '#FF9600' : '#999' }}>{r.isDaily ? `Daily Challenge #${getDayNumber()}` : 'Practice'}</p>
+          <div className="flex items-center justify-center gap-2 mt-1">
+            <p className="text-sm" style={{ color: r.isDaily ? '#FF9600' : '#999' }}>{r.isDaily ? `Daily Challenge #${getDayNumber()}` : 'Practice'}</p>
+            {diffLabel && (
+              <span className="text-[11px] font-bold px-2 py-0.5 rounded-full"
+                style={{ color: diffLabel.color, backgroundColor: diffLabel.bg }}>
+                {diffLabel.label}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Stars */}
@@ -89,7 +106,7 @@ ${starsStr}  ${r.score}pts${r.extra ? ' | ' + r.extra : ''}`;
         <div className="grid grid-cols-2 gap-3 mt-8">
           <StatBox label="Score" value={r.score.toString()} />
           <StatBox label="Accuracy" value={`${Math.round(r.accuracy)}%`} />
-          <StatBox label="Best Combo" value={`\u00d7${r.bestCombo}`} />
+          <StatBox label="Best Combo" value={`x${r.bestCombo}`} />
           <StatBox label="Time" value={`${elapsed}:${secs.toString().padStart(2, '0')}`} />
           {r.extra && <StatBox label="Words" value={r.extra} />}
         </div>
@@ -133,10 +150,37 @@ ${starsStr}  ${r.score}pts${r.extra ? ' | ' + r.extra : ''}`;
           <p className="text-xs text-[#999] mt-1">Level {level} — {xpProg}/100 XP</p>
         </div>
 
+        {/* Difficulty suggestion */}
+        {suggestedDiff && r.suggestedDifficulty && (
+          <button
+            onClick={() => {
+              useGameStore.getState().setGameDifficulty('word', r.suggestedDifficulty!);
+              resetSession();
+              setScreen('word_picker');
+            }}
+            className="bg-white rounded-2xl p-4 mt-4 flex items-center gap-3 active:scale-[0.98] transition-transform w-full text-left"
+            style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.05)', border: `2px solid ${suggestedDiff.color}40` }}
+          >
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+              style={{ backgroundColor: suggestedDiff.bg }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={suggestedDiff.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+              </svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-bold text-[#333]">Try {suggestedDiff.label}?</p>
+              <p className="text-xs text-[#999]">Based on your performance</p>
+            </div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#CCC" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+        )}
+
         {/* Streak reminder */}
         {streak > 0 && (
           <div className="bg-[#FFF5E6] rounded-2xl p-3 mt-4 flex items-center gap-3">
-            <span className="text-2xl">🔥</span>
+            <span className="text-2xl">{'\ud83d\udd25'}</span>
             <div>
               <p className="text-sm font-bold text-[#FF9600]">{streak} Day Streak!</p>
               <p className="text-xs text-[#CC7A00]">Keep it going tomorrow</p>
