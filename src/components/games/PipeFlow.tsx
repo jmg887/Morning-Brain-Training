@@ -16,9 +16,9 @@ const PIPE_COLOR = '#555';
 const PIPE_FILLED = '#1CB0F6';
 const SOURCE_COLOR = '#58CC02';
 const DRAIN_COLOR = '#FF3B30';
-const GLOBAL_TIME = 240;
-const FLOW_TICK_MS = 1200; // liquid advances one pipe every 1.2s
-const FLOW_PAUSE_MS = 2000; // pause after losing a life
+const GLOBAL_TIME = 420; // 7 minutes total session
+const FLOW_TICK_MS = 1500; // liquid advances one pipe every 1.5s
+const FLOW_PAUSE_MS = 2500; // pause after losing a life
 const MAX_LIVES = 3;
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
@@ -123,6 +123,11 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
   // Build dot at center
   const dotR = thickness * 0.45;
 
+  // Unique IDs for SVG filters (stable per render)
+  const uid = useMemo(() => Math.random().toString(36).slice(2, 8), []);
+  const filterId = `liq-${uid}`;
+  const gradId = `grd-${uid}`;
+
   return (
     <button
       onClick={onClick}
@@ -132,16 +137,67 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
         background: bgColor,
         border: `2px solid ${isFilled ? (isSource ? SOURCE_COLOR : isDrain ? DRAIN_COLOR : WATER_COLOR) + '40' : GRID_BG}`,
         cursor: 'pointer',
-        boxShadow: isFilled ? `0 0 8px ${color}30` : 'none',
+        boxShadow: isFilled ? `0 0 10px ${WATER_COLOR}40, inset 0 0 6px ${WATER_COLOR}20` : 'none',
       }}
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        {/* Pipe segments */}
+        {/* ─── Liquid SVG Filters ─── */}
+        <defs>
+          <linearGradient id={gradId} x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#7DD3FC" />
+            <stop offset="35%" stopColor="#38BDF8" />
+            <stop offset="65%" stopColor="#1CB0F6" />
+            <stop offset="100%" stopColor="#0284C7" />
+          </linearGradient>
+          <filter id={filterId} x="-10%" y="-10%" width="120%" height="120%">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.03 0.06"
+              numOctaves="3"
+              seed={7}
+              result="turb"
+            >
+              <animate attributeName="seed" from="0" to="100" dur="4s" repeatCount="indefinite" />
+            </feTurbulence>
+            <feDisplacementMap
+              in="SourceGraphic"
+              in2="turb"
+              scale="3"
+              xChannelSelector="R"
+              yChannelSelector="G"
+            />
+          </filter>
+        </defs>
+        {/* Pipe segments (base layer) */}
         {segments.map((d, i) => (
           <path key={i} d={d} stroke={color} strokeWidth={thickness} strokeLinecap="round" fill="none" />
         ))}
+        {/* Liquid-filled segments (on top, with gradient + turbulence filter) */}
+        {isFilled && segments.map((d, i) => (
+          <path
+            key={`liq-${i}`}
+            d={d}
+            stroke={`url(#${gradId})`}
+            strokeWidth={thickness - 2}
+            strokeLinecap="round"
+            fill="none"
+            filter={`url(#${filterId})`}
+            style={{ animation: 'liquid-shimmer 2s ease-in-out infinite' }}
+          />
+        ))}
         {/* Center dot */}
         <circle cx={half} cy={half} r={dotR} fill={color} />
+        {/* Liquid center glow when filled */}
+        {isFilled && (
+          <circle
+            cx={half}
+            cy={half}
+            r={dotR + 1}
+            fill={`url(#${gradId})`}
+            filter={`url(#${filterId})`}
+            style={{ animation: 'liquid-bubble 1.8s ease-in-out infinite' }}
+          />
+        )}
         {/* Source icon */}
         {isSource && (
           <>
@@ -875,6 +931,14 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         @keyframes float-up { 0% { opacity: 1; transform: translateY(0) translateX(-50%); } 100% { opacity: 0; transform: translateY(-60px) translateX(-50%); } }
         @keyframes slide-up { 0% { opacity: 0; transform: translateY(30px); } 100% { opacity: 1; transform: translateY(0); } }
         @keyframes flow-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }
+        @keyframes liquid-shimmer {
+          0%, 100% { opacity: 0.85; }
+          50% { opacity: 1; }
+        }
+        @keyframes liquid-bubble {
+          0%, 100% { opacity: 0.6; }
+          50% { opacity: 0.95; }
+        }
       `}</style>
     </div>
   );

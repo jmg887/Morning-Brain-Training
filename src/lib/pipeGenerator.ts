@@ -449,10 +449,10 @@ export function traceFlowPath(puzzle: PipePuzzle, maxSteps: number = 50): FlowSt
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 const ROUND_CONFIGS = [
-  { gridSize: 4, time: 60 },  // Round 1: 4x4, 60s
-  { gridSize: 5, time: 75 },  // Round 2: 5x5, 75s
-  { gridSize: 5, time: 65 },  // Round 3: 5x5, 65s
-  { gridSize: 6, time: 90 },  // Round 4: 6x6, 90s
+  { gridSize: 4, time: 90 },  // Round 1: 4x4, 90s
+  { gridSize: 5, time: 105 }, // Round 2: 5x5, 105s
+  { gridSize: 5, time: 95 },  // Round 3: 5x5, 95s
+  { gridSize: 6, time: 120 }, // Round 4: 6x6, 120s
 ];
 
 export interface PipeRound {
