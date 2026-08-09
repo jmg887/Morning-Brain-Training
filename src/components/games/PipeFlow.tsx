@@ -151,47 +151,17 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
         {segments.map((seg, i) => (
           <path key={i} d={seg.d} stroke={color} strokeWidth={thickness} strokeLinecap="round" fill="none" />
         ))}
-        {/* Liquid-filled segments: water texture pattern fill that flows */}
-        {isFilled && segments.map((seg, i) => {
-          // Pattern ID per direction so each can animate independently
-          const pid = `water-${seg.dir}`;
-          // Animate pattern offset based on direction and speed
-          const dur = flowSpeed === 'frontier' || flowSpeed === 'flow' ? 0.5 : 0.8;
-          // Offset direction: pattern scrolls along the pipe's flow axis
-          const animAttr = seg.dir === 'up' ? 'y'
-            : seg.dir === 'down' ? 'y'
-            : seg.dir === 'left' ? 'x'
-            : 'x';
-          const animFrom = seg.dir === 'up' ? '0' : seg.dir === 'down' ? '0' : seg.dir === 'left' ? '0' : '0';
-          const animTo = seg.dir === 'up' ? '-64' : seg.dir === 'down' ? '64' : seg.dir === 'left' ? '-64' : '64';
-          return (
-            <g key={`liq-${i}`}>
-              <defs>
-                <pattern
-                  id={`${pid}-${i}`}
-                  patternUnits="userSpaceOnUse"
-                  width="64" height="64"
-                >
-                  <animate
-                    attributeName={animAttr}
-                    from={animFrom}
-                    to={animTo}
-                    dur={`${dur}s`}
-                    repeatCount="indefinite"
-                  />
-                  <image href="/water-tile.png" x="0" y="0" width="64" height="64" />
-                </pattern>
-              </defs>
-              <path
-                d={seg.d}
-                stroke={`url(#${pid}-${i})`}
-                strokeWidth={thickness - 2}
-                strokeLinecap="round"
-                fill="none"
-              />
-            </g>
-          );
-        })}
+        {/* Liquid-filled segments: shared water texture pattern */}
+        {isFilled && segments.map((seg, i) => (
+          <path
+            key={`liq-${i}`}
+            d={seg.d}
+            stroke={`url(#water-${seg.dir})`}
+            strokeWidth={thickness - 2}
+            strokeLinecap="round"
+            fill="none"
+          />
+        ))}
         {/* Center dot */}
         <circle cx={half} cy={half} r={dotR} fill={color} />
         {/* Center bubble glow when filled (only on junctions) */}
@@ -888,6 +858,27 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         className="relative rounded-2xl p-2"
         style={{ width: actualGridSize + 16, height: actualGridSize + 16, background: GRID_BG }}
       >
+        {/* Shared water texture pattern defs — 4 directions, one animated pattern each */}
+        <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
+          <defs>
+            {(['up', 'down', 'left', 'right'] as const).map(dir => {
+              const attr = dir === 'up' || dir === 'down' ? 'y' : 'x';
+              const to = dir === 'up' || dir === 'left' ? -64 : 64;
+              return (
+                <pattern
+                  key={dir}
+                  id={`water-${dir}`}
+                  patternUnits="userSpaceOnUse"
+                  width="64" height="64"
+                >
+                  <animate attributeName={attr} from="0" to={String(to)} dur="0.6s" repeatCount="indefinite" />
+                  <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
+                </pattern>
+              );
+            })}
+          </defs>
+        </svg>
+
         {/* Grid lines (subtle) */}
         <div className="absolute inset-2 rounded-xl overflow-hidden" style={{ opacity: 0.3 }}>
           {Array.from({ length: activePuzzle.gridSize + 1 }).map((_, i) => (
