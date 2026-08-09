@@ -118,6 +118,10 @@ function FrontierWater({ entryDir, exitDir, size, thickness, onFilled, flowDir }
   flowDir: string;
 }) {
   const [fillStarted, setFillStarted] = useState(false);
+  const filledRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onFilledRef = useRef(onFilled);
+  onFilledRef.current = onFilled; // always up-to-date
   const half = size / 2;
 
   const [ex, ey] = edgePoint(entryDir, half, size);
@@ -126,14 +130,29 @@ function FrontierWater({ entryDir, exitDir, size, thickness, onFilled, flowDir }
   const d = `M ${ex} ${ey} L ${half} ${half} L ${ox} ${oy}`;
   const pathLength = size; // half + half
 
-  // Double-rAF: paint the initial hidden state first, then trigger transition
+  const handleFilled = useCallback(() => {
+    if (filledRef.current) return; // prevent double-fire
+    filledRef.current = true;
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    onFilledRef.current();
+  }, []); // stable — uses ref
+
+  // Double-rAF: paint initial hidden state, then trigger fill transition + start timer
   useEffect(() => {
     const r1 = requestAnimationFrame(() => {
-      const r2 = requestAnimationFrame(() => setFillStarted(true));
-      // cleanup not needed — effect runs once
+      const r2 = requestAnimationFrame(() => {
+        // Reliable timer as primary completion signal.
+        // onTransitionEnd is flaky on mobile browsers for SVG stroke-dashoffset.
+        timerRef.current = setTimeout(handleFilled, FLOW_FILL_DURATION * 1000 + 100);
+        // Trigger the CSS transition
+        setFillStarted(true);
+      });
     });
-    return () => cancelAnimationFrame(r1);
-  }, []);
+    return () => {
+      cancelAnimationFrame(r1);
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    };
+  }, [handleFilled]); // handleFilled is stable (empty deps)
 
   return (
     <path
@@ -142,7 +161,7 @@ function FrontierWater({ entryDir, exitDir, size, thickness, onFilled, flowDir }
       strokeWidth={thickness - 2}
       strokeLinecap="round"
       fill="none"
-      onTransitionEnd={(e) => { if (e.propertyName === 'stroke-dashoffset') onFilled(); }}
+      onTransitionEnd={(e) => { if (e.propertyName === 'stroke-dashoffset') handleFilled(); }}
       style={{
         strokeDasharray: pathLength,
         strokeDashoffset: fillStarted ? 0 : pathLength,
