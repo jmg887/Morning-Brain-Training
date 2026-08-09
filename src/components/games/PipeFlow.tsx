@@ -155,6 +155,7 @@ function FrontierWater({ entryDir, exitDir, size, thickness, onFilled, flowDir }
 // ─── Pipe Rendering Component ──────────────────────────────────────────────────
 
 interface PipeCellProps {
+  cellKey: string;
   type: string;
   rotation: number;
   size: number;
@@ -173,7 +174,7 @@ interface PipeCellProps {
   onFrontierFilled?: () => void;
 }
 
-function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed, segFlowDirs, frontierInfo, onFrontierFilled }: PipeCellProps) {
+function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed, segFlowDirs, frontierInfo, onFrontierFilled }: PipeCellProps) {
   const half = size / 2;
   const thickness = Math.max(size * 0.22, 6);
   // Treat frontier as visually filled (blue pipes, light bg)
@@ -239,7 +240,7 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
         {/* Frontier: progressive water fill (entry→center→exit) */}
         {isFrontier && frontierInfo && onFrontierFilled && (
           <FrontierWater
-            key={`fw-${frontierInfo.entryDir}-${frontierInfo.exitDir}`}
+            key={`fw-${cellKey}`}
             entryDir={frontierInfo.entryDir}
             exitDir={frontierInfo.exitDir}
             size={size}
@@ -310,6 +311,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   const gameEndedRef = useRef(false);
   const gridRef = useRef<PipePuzzle | null>(null);
   const flowStepRef = useRef(0); // how many steps the liquid has advanced
+  const lastFlowAdvanceRef = useRef(0); // timestamp of last flowTick advance
   const handlersRef = useRef({
     tick: () => {},
     flowTick: () => {},
@@ -622,6 +624,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
     // Normal advance — just update filled cells and step
     setState(flowStepUpdate);
+    lastFlowAdvanceRef.current = Date.now();
 
     // CRITICAL FIX: Check if the NEXT frontier (steps[nextStep]) is a dead end or drain.
     // flowTick checks steps[nextStep-1] (the cell that just filled) above, but the dead end
@@ -832,24 +835,21 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       setTimeout(() => {
         if (!gameEndedRef.current) setState({ flowActive: true });
       }, 2200);
-      // Fallback: periodically check if flow needs to advance.
-      // Normally the FrontierWater onTransitionEnd drives flowTick, but if the
-      // frontier is null (source has no 'left' conn, or other edge case),
-      // the flow would get permanently stuck. This interval catches that.
+      // Fallback: detect stuck flow and force-advance.
+      // Normally FrontierWater onTransitionEnd drives flowTick, but transitions
+      // can fail to fire (React key reuse, browser quirks, etc.).
+      // If no advance in >3s and flow is active, force-advance.
+      lastFlowAdvanceRef.current = Date.now();
       const flowFallback = setInterval(() => {
         if (gameEndedRef.current) return;
         const s = stateRef.current;
         if (s.phase !== 'playing' || s.flowPaused || !s.flowActive) return;
-        // Re-trace and check current step
-        const steps = traceFlowPath(gridRef.current!);
-        const idx = flowStepRef.current;
-        if (idx >= steps.length) return;
-        const step = steps[idx];
-        if (step.reachedDrain || step.isDeadEnd) {
-          // Current step is terminal but wasn't handled — force flowTick
+        const elapsed = Date.now() - lastFlowAdvanceRef.current;
+        if (elapsed > 3000) {
+          // Flow hasn't advanced in over 3s (fill duration is 1.8s) — stuck!
           handlersRef.current.flowTick();
         }
-      }, 3000);
+      }, 1000);
       return () => {
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         clearInterval(flowFallback);
@@ -872,6 +872,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       if (gameEndedRef.current) return;
       gridRef.current = JSON.parse(JSON.stringify(r.puzzle));
       flowStepRef.current = 0;
+      lastFlowAdvanceRef.current = Date.now();
       setState({
         phase: 'playing',
         roundTime: isFlow ? 999 : r.roundTime,
@@ -1159,6 +1160,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
               <div key={`${r}-${c}`} className="absolute"
                 style={{ left: 8 + c * cellSize, top: 8 + r * cellSize }}>
                 <PipeCellRender
+                  cellKey={`${r},${c}`}
                   type={cell.type}
                   rotation={cell.rotation}
                   size={cellSize - 2}
