@@ -477,6 +477,40 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
     // Re-trace the flow path from source based on current pipe rotations
     const steps = traceFlowPath(gridRef.current);
+
+    // If the path is empty or first step is a dead end, the source has no 'left' connection
+    if (steps.length === 0 || (steps[0].isDeadEnd && flowStepRef.current === 0)) {
+      // Source can't receive water — show as dead end so player knows to fix it
+      const newLives = s.lives - 1;
+      if (newLives <= 0) {
+        setState({
+          lives: 0,
+          phase: 'round_transition',
+          feedback: 'dead_end',
+          lastRoundMoves: s.moves,
+          lastRoundTime: 0,
+          lastRoundSolved: false,
+          combo: 0,
+        });
+        setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
+        return;
+      }
+      setState({
+        lives: newLives,
+        flowPaused: true,
+        flowDeadEndKey: s.flowDeadEndKey + 1,
+        feedback: 'dead_end',
+      });
+      setTimeout(() => {
+        if (gameEndedRef.current) return;
+        const cur = stateRef.current;
+        if (cur.phase === 'playing') {
+          setState({ flowPaused: false, feedback: null });
+        }
+      }, FLOW_PAUSE_MS);
+      return;
+    }
+
     const nextStep = flowStepRef.current + 1;
 
     if (nextStep > steps.length) {
@@ -558,17 +592,25 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         feedback: 'dead_end',
       });
 
-      // Resume flow after pause — FIX #4: DON'T reset to step 0.
-      // The player fixed their pipes; re-trace from source with current pipe positions
-      // but keep the liquid at its current progress level.
+      // Resume flow after pause — check if player fixed the pipes
       setTimeout(() => {
         if (gameEndedRef.current) return;
         const cur = stateRef.current;
         if (cur.phase === 'playing') {
-          // Re-trace path with updated pipe positions, keep current step count
+          // Re-trace path with updated pipe positions
           const freshSteps = traceFlowPath(gridRef.current!);
+          const stepIdx = Math.min(flowStepRef.current, freshSteps.length - 1);
+          // If the dead-end step is still a dead end, stay paused
+          if (stepIdx >= 0 && stepIdx < freshSteps.length && freshSteps[stepIdx].isDeadEnd) {
+            // Still broken — re-pause to keep showing "Fix the pipes!"
+            setState({
+              flowPaused: true,
+              flowDeadEndKey: cur.flowDeadEndKey + 1,
+              feedback: 'dead_end',
+            });
+            return;
+          }
           const newFilledAfterFix = new Set<string>();
-          // Fill cells up to current step on the NEW path
           for (let i = 0; i < flowStepRef.current && i < freshSteps.length; i++) {
             newFilledAfterFix.add(`${freshSteps[i].row},${freshSteps[i].col}`);
           }
@@ -624,9 +666,9 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     setState({ moves: newMoves, totalMoves: s.totalMoves + 1 });
 
     // In flow mode: rotating a pipe re-traces the flow path
-    // The filled cells reset to however far the liquid has gotten on the new path
-    // FIX #3: Use flowStepRef.current (source of truth) instead of s.flowStep (stale state)
-    if (isFlow && !s.flowPaused) {
+    // The filled cells update to however far the liquid has gotten on the NEW path
+    // This runs both during normal flow AND during pause (so player sees visual feedback)
+    if (isFlow) {
       const steps = traceFlowPath(p);
       const newFilled = new Set<string>();
       const currentStep = flowStepRef.current; // read from ref, not state
@@ -669,14 +711,13 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       }, 2000);
     }
 
-    // Flow mode: check if solved (player might have just completed the path)
-    if (isFlow && isPuzzleSolved(p)) {
-      // Don't auto-solve in flow mode — let the liquid reach the drain naturally
-      // But if the flow was paused (dead end), and the player fixes it, unpause
-      // FIX #4: Also don't reset flowStepRef to 0 here!
-      if (s.flowPaused) {
-        // Re-trace path with fixed pipes, keep current progress
-        const steps = traceFlowPath(p);
+    // Flow mode: if paused (dead end) and player fixes the path, unpause immediately
+    if (isFlow && s.flowPaused) {
+      const steps = traceFlowPath(p);
+      // Check if the dead-end step is no longer a dead end on the new path
+      const stepIdx = Math.min(flowStepRef.current, steps.length - 1);
+      if (stepIdx >= 0 && stepIdx < steps.length && !steps[stepIdx].isDeadEnd) {
+        // The blocking step is now clear — unpause so flow can continue
         const newFilledAfterFix = new Set<string>();
         for (let i = 0; i < flowStepRef.current && i < steps.length; i++) {
           newFilledAfterFix.add(`${steps[i].row},${steps[i].col}`);
@@ -706,6 +747,28 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       setTimeout(() => {
         if (!gameEndedRef.current) setState({ flowActive: true });
       }, 2200);
+      // Fallback: periodically check if flow needs to advance.
+      // Normally the FrontierWater onTransitionEnd drives flowTick, but if the
+      // frontier is null (source has no 'left' conn, or other edge case),
+      // the flow would get permanently stuck. This interval catches that.
+      const flowFallback = setInterval(() => {
+        if (gameEndedRef.current) return;
+        const s = stateRef.current;
+        if (s.phase !== 'playing' || s.flowPaused || !s.flowActive) return;
+        // If there's no frontier cell but we haven't reached drain/dead end yet,
+        // the flow is stuck — force a tick
+        const steps = traceFlowPath(gridRef.current!);
+        const idx = flowStepRef.current;
+        if (idx < steps.length && !steps[idx].reachedDrain && !steps[idx].isDeadEnd) {
+          // There should be a frontier but there isn't — force advance
+          handlersRef.current.flowTick();
+        }
+      }, 3000);
+      return () => {
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        clearInterval(flowFallback);
+        gameEndedRef.current = true;
+      };
     }
     return () => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
@@ -1045,7 +1108,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       {/* ── Score Pop ── */}
       {state.feedback === 'solved' && (
         <div className="fixed font-black text-xl" style={{ color: '#58CC02', animation: 'float-up 1s ease-out forwards', zIndex: 100, pointerEvents: 'none', top: '40%', left: '50%', transform: 'translateX(-50%)' }}>
-          +{500 + Math.floor(state.roundTime * 5)} Connected!
+          {isFlow ? 'Drain Reached!' : `+${500 + Math.floor(state.roundTime * 5)} Connected!`}
         </div>
       )}
 

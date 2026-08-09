@@ -298,11 +298,25 @@ function buildPuzzle(size: number, rng: () => number): PipePuzzle | null {
 
 // ─── Water Flow Check ──────────────────────────────────────────────────────
 
-/** Check which cells are connected to the source via properly aligned pipes */
+/** Check which cells are connected to the source via properly aligned pipes.
+ *  Water enters the source from the left edge, so the source MUST have a 'left' connection.
+ *  Water exits the drain to the right edge, so the drain MUST have a 'right' connection.
+ */
 export function computeWaterFlow(puzzle: PipePuzzle): Set<string> {
-  const { grid, sourceRow, sourceCol } = puzzle;
+  const { grid, sourceRow, sourceCol, drainRow, drainCol } = puzzle;
   const size = puzzle.gridSize;
   const connected = new Set<string>();
+
+  // Source must have a 'left' connection for water to enter from outside
+  const sourceCell = grid[sourceRow][sourceCol];
+  const sourceConns = getConnections(sourceCell.type, sourceCell.rotation);
+  if (!sourceConns.includes('left')) return connected; // no water can enter
+
+  // Drain must have a 'right' connection for water to exit to outside
+  const drainCell = grid[drainRow][drainCol];
+  const drainConns = getConnections(drainCell.type, drainCell.rotation);
+  const drainCanExit = drainConns.includes('right');
+
   const queue: Pos[] = [{ row: sourceRow, col: sourceCol }];
   connected.add(`${sourceRow},${sourceCol}`);
 
@@ -329,11 +343,26 @@ export function computeWaterFlow(puzzle: PipePuzzle): Set<string> {
     }
   }
 
+  // If drain can't exit right, remove it from connected set
+  // (water reaches the drain cell but can't flow out)
+  if (!drainCanExit) {
+    connected.delete(`${drainRow},${drainCol}`);
+  }
+
   return connected;
 }
 
-/** Check if the puzzle is solved (source connects to drain) */
+/** Check if the puzzle is solved (source connects to drain with valid entry/exit) */
 export function isPuzzleSolved(puzzle: PipePuzzle): boolean {
+  // Source must have 'left' connection, drain must have 'right' connection
+  const sourceCell = puzzle.grid[puzzle.sourceRow][puzzle.sourceCol];
+  const sourceConns = getConnections(sourceCell.type, sourceCell.rotation);
+  if (!sourceConns.includes('left')) return false;
+
+  const drainCell = puzzle.grid[puzzle.drainRow][puzzle.drainCol];
+  const drainConns = getConnections(drainCell.type, drainCell.rotation);
+  if (!drainConns.includes('right')) return false;
+
   const flow = computeWaterFlow(puzzle);
   return flow.has(`${puzzle.drainRow},${puzzle.drainCol}`);
 }
@@ -382,6 +411,16 @@ export function traceFlowPath(puzzle: PipePuzzle, maxSteps: number = 50): FlowSt
     const isDrain = curRow === drainRow && curCol === drainCol;
     const isSource = curRow === sourceRow && curCol === sourceCol;
 
+    // Source MUST have a 'left' connection for water to enter from outside the grid.
+    // If it doesn't, flow can't start — this is a dead end at step 0.
+    if (isSource && !conns.includes('left')) {
+      steps.push({
+        row: curRow, col: curCol, entryDir: null, exitDir: null, nextDir: null,
+        reachedDrain: false, isDeadEnd: true,
+      });
+      break;
+    }
+
     // Determine exit: the flow came from entryDir, so it exits through another connection
     // Special: source enters from 'left' (outside grid)
     const effectiveEntry: Direction = isSource ? 'left' : (entryDir as Direction);
@@ -393,11 +432,24 @@ export function traceFlowPath(puzzle: PipePuzzle, maxSteps: number = 50): FlowSt
     let reachedDrain = false;
     let isDeadEnd = false;
 
-    if (isDrain && conns.includes('right')) {
-      // Flow exits the drain to the right — success!
-      exitDir = 'right';
-      nextDir = null;
-      reachedDrain = true;
+    // For drain: flow must enter from a valid direction AND exit to 'right'
+    // The drain must have a 'right' connection to let water out of the grid
+    if (isDrain) {
+      if (conns.includes('right') && conns.includes(effectiveEntry)) {
+        // Flow enters from effectiveEntry and exits right — success!
+        exitDir = 'right';
+        nextDir = null;
+        reachedDrain = true;
+      } else if (conns.includes('right')) {
+        // Has right exit but wrong entry — still count as reached drain
+        // (water found the drain even if entry direction is unusual)
+        exitDir = 'right';
+        nextDir = null;
+        reachedDrain = true;
+      } else {
+        // Drain has no 'right' connection — dead end
+        isDeadEnd = true;
+      }
     } else if (exitDirs.length > 0) {
       // Pick the first available exit (in a real pipe there's only one meaningful exit
       // that isn't where we came from — but tees/crosses have multiple)
