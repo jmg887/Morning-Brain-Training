@@ -12,8 +12,6 @@ const ACCENT_LIGHT = '#FFF5E6';
 const WATER_COLOR = '#1CB0F6';
 const WATER_LIGHT = '#E8F6FF';
 const GRID_BG = '#E8E8E8';
-const PIPE_COLOR = '#555';
-const PIPE_FILLED = '#1CB0F6';
 const SOURCE_COLOR = '#58CC02';
 const DRAIN_COLOR = '#FF3B30';
 const GLOBAL_TIME = 420; // 7 minutes total session
@@ -181,9 +179,8 @@ interface PipeCellProps {
 function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed, segFlowDirs, frontierInfo }: PipeCellProps) {
   const half = size / 2;
   const thickness = Math.max(size * 0.22, 6);
-  // Base pipe stays grey always; liquid overlay provides the blue water effect
-  const color = isSource ? SOURCE_COLOR : isDrain ? (isDrainConnected ? DRAIN_COLOR : '#CC3333') : PIPE_COLOR;
-  // Cell background stays neutral — only the pipe interior shows liquid color
+  const outlineW = Math.max(thickness * 0.18, 1.5);
+  const jointR = thickness * 0.55;
   const bgColor = isSource ? '#E8FFE0' : isDrain ? '#FFE8E5' : '#F5F5F5';
 
   // Build path segments from connections, each with flow direction for pattern animation
@@ -198,8 +195,16 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
     }
   }
 
-  // Build dot at center
-  const dotR = thickness * 0.45;
+  // Pipe gradient selection based on state
+  const pipeGrad = (segDir: string) => {
+    const isH = segDir === 'left' || segDir === 'right';
+    if (isFilled || isFrontier) return isH ? 'url(#pipe-filled-grad-h)' : 'url(#pipe-filled-grad-v)';
+    return isH ? 'url(#pipe-grad-h)' : 'url(#pipe-grad-v)';
+  };
+  const jointGrad = isSource ? 'url(#pipe-joint-source)'
+    : isDrain ? 'url(#pipe-joint-drain)'
+    : (isFilled || isFrontier) ? 'url(#pipe-joint-filled)'
+    : 'url(#pipe-joint)';
 
   return (
     <button
@@ -213,11 +218,21 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
       }}
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        {/* Pipe segments (base layer) */}
-        {segments.map((seg, i) => (
-          <path key={i} d={seg.d} stroke={color} strokeWidth={thickness} strokeLinecap="round" fill="none" />
+        {/* Pipe segments: black outline + gradient body */}
+        {!isSource && !isDrain && segments.map((seg, i) => (
+          <g key={i}>
+            <path d={seg.d} stroke="#1a1a1a" strokeWidth={thickness + outlineW * 2} strokeLinecap="round" fill="none" />
+            <path d={seg.d} stroke={pipeGrad(seg.dir)} strokeWidth={thickness} strokeLinecap="round" fill="none" />
+          </g>
         ))}
-        {/* Liquid-filled segments: shared water texture pattern, direction-aware */}
+        {/* Source/Drain pipe segments: colored solid */}
+        {(isSource || isDrain) && segments.map((seg, i) => (
+          <g key={i}>
+            <path d={seg.d} stroke="#1a1a1a" strokeWidth={thickness + outlineW * 2} strokeLinecap="round" fill="none" />
+            <path d={seg.d} stroke={isSource ? '#58CC02' : '#FF3B30'} strokeWidth={thickness} strokeLinecap="round" fill="none" />
+          </g>
+        ))}
+        {/* Liquid texture overlay on filled pipes */}
         {isFilled && segments.map((seg, i) => {
           const flowDir = segFlowDirs?.[seg.dir] ?? seg.dir;
           return (
@@ -225,13 +240,13 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
               key={`liq-${i}`}
               d={seg.d}
               stroke={`url(#water-flow-${flowDir})`}
-              strokeWidth={thickness - 2}
+              strokeWidth={thickness - 4}
               strokeLinecap="round"
               fill="none"
             />
           );
         })}
-        {/* Frontier: progressive water fill (entry→center→exit) */}
+        {/* Frontier: progressive water fill */}
         {isFrontier && frontierInfo && (
           <FrontierWater
             key={`fw-${cellKey}-${frontierInfo.fillKey}`}
@@ -243,21 +258,15 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
             fillKey={frontierInfo.fillKey}
           />
         )}
-        {/* Center dot — hidden when liquid is present (liquid overlay covers center) */}
-        {!isFilled && !isFrontier && <circle cx={half} cy={half} r={dotR} fill={color} />}
-        {/* Source icon */}
+        {/* Center sphere joint */}
+        <circle cx={half} cy={half} r={jointR} fill={jointGrad} stroke="#1a1a1a" strokeWidth={outlineW} />
+        {/* Source + icon */}
         {isSource && (
-          <>
-            <circle cx={half} cy={half} r={thickness * 0.9} fill={SOURCE_COLOR} />
-            <path d={`M ${half - 4} ${half} L ${half + 4} ${half} M ${half} ${half - 4} L ${half} ${half + 4}`} stroke="#fff" strokeWidth={2.5} strokeLinecap="round" />
-          </>
+          <path d={`M ${half - 4} ${half} L ${half + 4} ${half} M ${half} ${half - 4} L ${half} ${half + 4}`} stroke="#fff" strokeWidth={2.5} strokeLinecap="round" />
         )}
-        {/* Drain icon */}
+        {/* Drain x icon */}
         {isDrain && (
-          <>
-            <circle cx={half} cy={half} r={thickness * 0.9} fill={isDrainConnected ? SOURCE_COLOR : '#CC3333'} />
-            <path d={`M ${half - 4} ${half - 4} L ${half + 4} ${half + 4} M ${half + 4} ${half - 4} L ${half - 4} ${half + 4}`} stroke="#fff" strokeWidth={2.5} strokeLinecap="round" />
-          </>
+          <path d={`M ${half - 4} ${half - 4} L ${half + 4} ${half + 4} M ${half + 4} ${half - 4} L ${half - 4} ${half + 4}`} stroke="#fff" strokeWidth={2.5} strokeLinecap="round" />
         )}
       </svg>
     </button>
@@ -1005,25 +1014,67 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         className="relative rounded-2xl p-2"
         style={{ width: actualGridSize + 16, height: actualGridSize + 16, background: GRID_BG }}
       >
-        {/* Shared water texture pattern defs — 4 actual flow directions */}
+        {/* Shared gradient & pattern defs */}
         <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
           <defs>
-            {/* water-flow-right: texture scrolls right (water flows rightward) */}
+            {/* 3D Pipe Gradients */}
+            <linearGradient id="pipe-grad-h" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#8a8a8a" />
+              <stop offset="35%" stopColor="#666" />
+              <stop offset="70%" stopColor="#4a4a4a" />
+              <stop offset="100%" stopColor="#2d2d2d" />
+            </linearGradient>
+            <linearGradient id="pipe-grad-v" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#8a8a8a" />
+              <stop offset="35%" stopColor="#666" />
+              <stop offset="70%" stopColor="#4a4a4a" />
+              <stop offset="100%" stopColor="#2d2d2d" />
+            </linearGradient>
+            <linearGradient id="pipe-filled-grad-h" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#4FC3F7" />
+              <stop offset="35%" stopColor="#1CB0F6" />
+              <stop offset="70%" stopColor="#0288D1" />
+              <stop offset="100%" stopColor="#01579B" />
+            </linearGradient>
+            <linearGradient id="pipe-filled-grad-v" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#4FC3F7" />
+              <stop offset="35%" stopColor="#1CB0F6" />
+              <stop offset="70%" stopColor="#0288D1" />
+              <stop offset="100%" stopColor="#01579B" />
+            </linearGradient>
+            <radialGradient id="pipe-joint" cx="38%" cy="32%" r="65%">
+              <stop offset="0%" stopColor="#aaa" />
+              <stop offset="45%" stopColor="#777" />
+              <stop offset="100%" stopColor="#333" />
+            </radialGradient>
+            <radialGradient id="pipe-joint-filled" cx="38%" cy="32%" r="65%">
+              <stop offset="0%" stopColor="#81D4FA" />
+              <stop offset="45%" stopColor="#1CB0F6" />
+              <stop offset="100%" stopColor="#01579B" />
+            </radialGradient>
+            <radialGradient id="pipe-joint-source" cx="38%" cy="32%" r="65%">
+              <stop offset="0%" stopColor="#81C784" />
+              <stop offset="45%" stopColor="#58CC02" />
+              <stop offset="100%" stopColor="#2E7D32" />
+            </radialGradient>
+            <radialGradient id="pipe-joint-drain" cx="38%" cy="32%" r="65%">
+              <stop offset="0%" stopColor="#EF9A9A" />
+              <stop offset="45%" stopColor="#FF3B30" />
+              <stop offset="100%" stopColor="#B71C1C" />
+            </radialGradient>
+            {/* Water Flow Patterns */}
             <pattern id="water-flow-right" patternUnits="userSpaceOnUse" width="64" height="64">
               <animate attributeName="x" from="0" to="64" dur="1s" repeatCount="indefinite" />
               <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
             </pattern>
-            {/* water-flow-left: texture scrolls left (water flows leftward) */}
             <pattern id="water-flow-left" patternUnits="userSpaceOnUse" width="64" height="64">
               <animate attributeName="x" from="0" to="-64" dur="1s" repeatCount="indefinite" />
               <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
             </pattern>
-            {/* water-flow-down: texture scrolls down (water flows downward) */}
             <pattern id="water-flow-down" patternUnits="userSpaceOnUse" width="64" height="64">
               <animate attributeName="y" from="0" to="64" dur="1s" repeatCount="indefinite" />
               <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
             </pattern>
-            {/* water-flow-up: texture scrolls up (water flows upward) */}
             <pattern id="water-flow-up" patternUnits="userSpaceOnUse" width="64" height="64">
               <animate attributeName="y" from="0" to="-64" dur="1s" repeatCount="indefinite" />
               <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
