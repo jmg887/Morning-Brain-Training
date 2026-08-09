@@ -622,6 +622,91 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
     // Normal advance — just update filled cells and step
     setState(flowStepUpdate);
+
+    // CRITICAL FIX: Check if the NEXT frontier (steps[nextStep]) is a dead end or drain.
+    // flowTick checks steps[nextStep-1] (the cell that just filled) above, but the dead end
+    // is often one step ahead. Without this, frontierCell returns null, no FrontierWater
+    // renders, and flow gets permanently stuck.
+    const nextFrontierIdx = nextStep;
+    if (nextFrontierIdx < steps.length) {
+      const nextFrontier = steps[nextFrontierIdx];
+      if (nextFrontier.isDeadEnd) {
+        // The next cell to fill is a dead end — handle it after state settles
+        setTimeout(() => {
+          if (gameEndedRef.current) return;
+          const cur = stateRef.current;
+          if (cur.phase !== 'playing') return;
+          const newLives = cur.lives - 1;
+          if (newLives <= 0) {
+            setState({
+              lives: 0,
+              phase: 'round_transition',
+              feedback: 'dead_end',
+              lastRoundMoves: cur.moves,
+              lastRoundTime: 0,
+              lastRoundSolved: false,
+              combo: 0,
+            });
+            setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
+            return;
+          }
+          setState({
+            lives: newLives,
+            flowPaused: true,
+            flowDeadEndKey: cur.flowDeadEndKey + 1,
+            feedback: 'dead_end',
+          });
+          setTimeout(() => {
+            if (gameEndedRef.current) return;
+            const c2 = stateRef.current;
+            if (c2.phase === 'playing') {
+              const freshSteps = traceFlowPath(gridRef.current!);
+              const si = Math.min(flowStepRef.current, freshSteps.length - 1);
+              if (si >= 0 && si < freshSteps.length && freshSteps[si].isDeadEnd) {
+                setState({ flowPaused: true, flowDeadEndKey: c2.flowDeadEndKey + 1, feedback: 'dead_end' });
+                return;
+              }
+              const nf = new Set<string>();
+              for (let i = 0; i < flowStepRef.current && i < freshSteps.length; i++) nf.add(`${freshSteps[i].row},${freshSteps[i].col}`);
+              setState({ flowPaused: false, feedback: null, flowFilledCells: nf });
+            }
+          }, FLOW_PAUSE_MS);
+        }, 50);
+        return; // skip the rest — dead end handling scheduled above
+      }
+      if (nextFrontier.reachedDrain) {
+        // The drain is the next frontier — handle drain reached after state settles
+        setTimeout(() => {
+          if (gameEndedRef.current) return;
+          const cur = stateRef.current;
+          if (cur.phase !== 'playing') return;
+          const newCombo = cur.combo + 1;
+          const stepsUsed = flowStepRef.current;
+          const timeBonus = Math.max(0, Math.floor(cur.globalTime * 3));
+          const livesBonus = cur.lives * 150;
+          const stepsPenalty = Math.max(0, (stepsUsed - 8) * 10);
+          const roundScore = 600 + timeBonus + livesBonus - stepsPenalty;
+          setState({
+            score: cur.score + roundScore,
+            combo: newCombo,
+            bestCombo: Math.max(cur.bestCombo, newCombo),
+            totalCorrect: cur.totalCorrect + 1,
+            roundsCompleted: cur.roundsCompleted + 1,
+            roundTimes: [...cur.roundTimes, 0],
+            phase: 'round_transition',
+            feedback: 'solved',
+            lastRoundMoves: cur.moves,
+            lastRoundTime: 0,
+            lastRoundSolved: true,
+          });
+          setTimeout(() => {
+            if (gameEndedRef.current) return;
+            if (stateRef.current.phase === 'round_transition') handlersRef.current.advanceRound();
+          }, 2000);
+        }, 50);
+        return;
+      }
+    }
   }, [setState, endGame, isFlow]); // FIX #3: removed `puzzle` from deps — use gridRef.current inside
 
   // ─── Advance Round ──────────────────────────────────────────────────────────
@@ -755,12 +840,13 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         if (gameEndedRef.current) return;
         const s = stateRef.current;
         if (s.phase !== 'playing' || s.flowPaused || !s.flowActive) return;
-        // If there's no frontier cell but we haven't reached drain/dead end yet,
-        // the flow is stuck — force a tick
+        // Re-trace and check current step
         const steps = traceFlowPath(gridRef.current!);
         const idx = flowStepRef.current;
-        if (idx < steps.length && !steps[idx].reachedDrain && !steps[idx].isDeadEnd) {
-          // There should be a frontier but there isn't — force advance
+        if (idx >= steps.length) return;
+        const step = steps[idx];
+        if (step.reachedDrain || step.isDeadEnd) {
+          // Current step is terminal but wasn't handled — force flowTick
           handlersRef.current.flowTick();
         }
       }, 3000);
