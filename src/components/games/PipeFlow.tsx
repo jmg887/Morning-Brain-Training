@@ -184,7 +184,8 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
   // Treat frontier as visually filled (blue pipes, light bg)
   const visuallyFilled = isFilled || isFrontier;
   const color = isSource ? SOURCE_COLOR : isDrain ? (isDrainConnected ? DRAIN_COLOR : '#CC3333') : visuallyFilled ? PIPE_FILLED : PIPE_COLOR;
-  const bgColor = isSource ? '#E8FFE0' : isDrain ? '#FFE8E5' : visuallyFilled ? WATER_LIGHT : '#F5F5F5';
+  // Cell background stays neutral — only the pipe interior shows liquid color
+  const bgColor = isSource ? '#E8FFE0' : isDrain ? '#FFE8E5' : '#F5F5F5';
 
   // Build path segments from connections, each with flow direction for pattern animation
   const conns = getConnections(type as 'straight' | 'bend' | 'tee' | 'cross' | 'dead', rotation);
@@ -201,24 +202,17 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
   // Build dot at center
   const dotR = thickness * 0.45;
 
-  // Glow animation class
-  const glowAnim = isFrontier
-    ? 'water-glow-frontier'
-    : flowSpeed === 'flow'
-      ? 'water-glow-flow'
-      : 'water-glow-classic';
-
   // Bubble only on cells with 2+ connections (not dead ends)
   const hasBubble = visuallyFilled && conns.length >= 2;
 
   return (
     <button
       onClick={onClick}
-      className={`absolute rounded-lg transition-all duration-150 active:scale-95 ${visuallyFilled ? glowAnim : ''}`}
+      className={`absolute rounded-lg transition-all duration-150 active:scale-95`}
       style={{
         width: size, height: size, left: 0, top: 0,
         background: bgColor,
-        border: `2px solid ${visuallyFilled ? (isSource ? SOURCE_COLOR : isDrain ? DRAIN_COLOR : WATER_COLOR) + '40' : GRID_BG}`,
+        border: `2px solid ${isSource ? SOURCE_COLOR + '40' : isDrain ? DRAIN_COLOR + '40' : GRID_BG}`,
         cursor: 'pointer',
       }}
     >
