@@ -18,6 +18,7 @@ const SOURCE_COLOR = '#58CC02';
 const DRAIN_COLOR = '#FF3B30';
 const GLOBAL_TIME = 420; // 7 minutes total session
 const FLOW_FILL_DURATION = 1.8; // seconds to fill one cell (the payoff!)
+const FLOW_TICK_MS = 1900; // ms between flow advances (timer-driven, not callback-driven)
 const FLOW_PAUSE_MS = 2500; // pause after losing a life
 const FLOW_PREP_SECONDS = 5; // seconds to prepare before flow starts
 const MAX_LIVES = 3;
@@ -99,8 +100,9 @@ function createInitialState(isFlow: boolean): PlayState {
 const OPPOSITE_DIR: Record<string, string> = { up: 'down', down: 'up', left: 'right', right: 'left' };
 
 // ─── Frontier Water (progressive cell fill) ────────────────────────────────
-// Renders water gradually filling a cell from entry edge → center → exit edge
-// Uses CSS transition on stroke-dashoffset. Calls onFilled when complete.
+// Renders water gradually filling a cell from entry edge → center → exit edge.
+// PURELY VISUAL — flow advancement is driven by a setInterval timer in the parent.
+// fillKey forces a re-mount via React key when the frontier moves to a new cell.
 
 function edgePoint(dir: string, half: number, size: number): [number, number] {
   switch (dir) {
@@ -112,50 +114,33 @@ function edgePoint(dir: string, half: number, size: number): [number, number] {
   }
 }
 
-function FrontierWater({ entryDir, exitDir, size, thickness, onFilled, flowDir }: {
+function FrontierWater({ entryDir, exitDir, size, thickness, flowDir, fillKey }: {
   entryDir: string;
   exitDir: string;
   size: number;
   thickness: number;
-  onFilled: () => void;
   flowDir: string;
+  fillKey: number;
 }) {
   const [fillStarted, setFillStarted] = useState(false);
-  const filledRef = useRef(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onFilledRef = useRef(onFilled);
-  onFilledRef.current = onFilled; // always up-to-date
   const half = size / 2;
 
   const [ex, ey] = edgePoint(entryDir, half, size);
   const [ox, oy] = edgePoint(exitDir, half, size);
-  // Path: entry edge → center → exit edge
   const d = `M ${ex} ${ey} L ${half} ${half} L ${ox} ${oy}`;
-  const pathLength = size; // half + half
+  const pathLength = size;
 
-  const handleFilled = useCallback(() => {
-    if (filledRef.current) return; // prevent double-fire
-    filledRef.current = true;
-    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-    onFilledRef.current();
-  }, []); // stable — uses ref
-
-  // Double-rAF: paint initial hidden state, then trigger fill transition + start timer
+  // Double-rAF: paint initial hidden state, then trigger CSS transition.
+  // fillKey changes when frontier moves to a new cell, which triggers re-mount
+  // via React key, so this effect always runs fresh.
   useEffect(() => {
     const r1 = requestAnimationFrame(() => {
       const r2 = requestAnimationFrame(() => {
-        // Reliable timer as primary completion signal.
-        // onTransitionEnd is flaky on mobile browsers for SVG stroke-dashoffset.
-        timerRef.current = setTimeout(handleFilled, FLOW_FILL_DURATION * 1000 + 100);
-        // Trigger the CSS transition
         setFillStarted(true);
       });
     });
-    return () => {
-      cancelAnimationFrame(r1);
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-    };
-  }, [handleFilled]); // handleFilled is stable (empty deps)
+    return () => cancelAnimationFrame(r1);
+  }, [fillKey]);
 
   return (
     <path
@@ -164,7 +149,6 @@ function FrontierWater({ entryDir, exitDir, size, thickness, onFilled, flowDir }
       strokeWidth={thickness - 2}
       strokeLinecap="round"
       fill="none"
-      onTransitionEnd={(e) => { if (e.propertyName === 'stroke-dashoffset') handleFilled(); }}
       style={{
         strokeDasharray: pathLength,
         strokeDashoffset: fillStarted ? 0 : pathLength,
@@ -191,12 +175,10 @@ interface PipeCellProps {
   /** For each segment direction, the actual flow direction of water through it */
   segFlowDirs?: Record<string, string>;
   /** Progressive fill info for the frontier cell */
-  frontierInfo?: { entryDir: string; exitDir: string; flowDir: string };
-  /** Called when the frontier cell finishes filling */
-  onFrontierFilled?: () => void;
+  frontierInfo?: { entryDir: string; exitDir: string; flowDir: string; fillKey: number };
 }
 
-function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed, segFlowDirs, frontierInfo, onFrontierFilled }: PipeCellProps) {
+function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed, segFlowDirs, frontierInfo }: PipeCellProps) {
   const half = size / 2;
   const thickness = Math.max(size * 0.22, 6);
   // Treat frontier as visually filled (blue pipes, light bg)
@@ -260,15 +242,15 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
           );
         })}
         {/* Frontier: progressive water fill (entry→center→exit) */}
-        {isFrontier && frontierInfo && onFrontierFilled && (
+        {isFrontier && frontierInfo && (
           <FrontierWater
-            key={`fw-${cellKey}`}
+            key={`fw-${cellKey}-${frontierInfo.fillKey}`}
             entryDir={frontierInfo.entryDir}
             exitDir={frontierInfo.exitDir}
             size={size}
             thickness={thickness}
-            onFilled={onFrontierFilled}
             flowDir={frontierInfo.flowDir}
+            fillKey={frontierInfo.fillKey}
           />
         )}
         {/* Center dot */}
@@ -333,7 +315,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   const gameEndedRef = useRef(false);
   const gridRef = useRef<PipePuzzle | null>(null);
   const flowStepRef = useRef(0); // how many steps the liquid has advanced
-  const lastFlowAdvanceRef = useRef(0); // timestamp of last flowTick advance
+  const flowIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null); // drives flow advancement
   const handlersRef = useRef({
     tick: () => {},
     flowTick: () => {},
@@ -413,7 +395,8 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       col: step.col,
       entryDir,
       exitDir,
-      flowDir: exitDir, // water flows toward exit
+      flowDir: exitDir,
+      fillKey: state.flowStep, // changes each step → forces FrontierWater re-mount
     };
   }, [isFlow, state.flowPaused, state.flowActive, state.flowStep, state.flowFilledCells, state.moves]);
 
@@ -423,6 +406,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     if (gameEndedRef.current) return;
     gameEndedRef.current = true;
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
     setState({ phase: 'ended' });
   }, [setState]);
 
@@ -490,57 +474,48 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     }
   }, [setState, endGame, isFlow]);
 
-  // ─── Flow Mode: Liquid Advance Tick ──────────────────────────────────────
+  // ─── Flow Mode: Timer-Driven Liquid Advance ──────────────────────────────
+  // CRITICAL: Flow is now driven by a setInterval (FLOW_TICK_MS), not by
+  // CSS transition callbacks. This eliminates all issues with:
+  //   - onTransitionEnd not firing on mobile SVG
+  //   - React StrictMode double-mounting canceling timers
+  //   - Complex callback chains that silently fail
 
   const flowTick = useCallback(() => {
     if (gameEndedRef.current) return;
     const s = stateRef.current;
     if (s.phase !== 'playing' || !isFlow) return;
-    if (s.flowPaused) return; // paused after dead end
+    if (s.flowPaused) return;
     if (!gridRef.current) return;
 
-    // Re-trace the flow path from source based on current pipe rotations
     const steps = traceFlowPath(gridRef.current);
 
-    // If the path is empty or first step is a dead end, the source has no 'left' connection
+    // Source can't receive water
     if (steps.length === 0 || (steps[0].isDeadEnd && flowStepRef.current === 0)) {
-      // Source can't receive water — show as dead end so player knows to fix it
       const newLives = s.lives - 1;
       if (newLives <= 0) {
         setState({
-          lives: 0,
-          phase: 'round_transition',
-          feedback: 'dead_end',
-          lastRoundMoves: s.moves,
-          lastRoundTime: 0,
-          lastRoundSolved: false,
-          combo: 0,
+          lives: 0, phase: 'round_transition', feedback: 'dead_end',
+          lastRoundMoves: s.moves, lastRoundTime: 0, lastRoundSolved: false, combo: 0,
         });
+        if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
         setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
         return;
       }
       setState({
-        lives: newLives,
-        flowPaused: true,
-        flowDeadEndKey: s.flowDeadEndKey + 1,
-        feedback: 'dead_end',
+        lives: newLives, flowPaused: true,
+        flowDeadEndKey: s.flowDeadEndKey + 1, feedback: 'dead_end',
       });
       setTimeout(() => {
         if (gameEndedRef.current) return;
         const cur = stateRef.current;
-        if (cur.phase === 'playing') {
-          setState({ flowPaused: false, feedback: null });
-        }
+        if (cur.phase === 'playing') setState({ flowPaused: false, feedback: null });
       }, FLOW_PAUSE_MS);
       return;
     }
 
     const nextStep = flowStepRef.current + 1;
-
-    if (nextStep > steps.length) {
-      // Already at or past the end — re-check
-      return;
-    }
+    if (nextStep > steps.length) return;
 
     // Add the next cell to filled set
     const newFilled = new Set(s.flowFilledCells);
@@ -554,14 +529,12 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     const reachedStep = steps[Math.min(nextStep - 1, steps.length - 1)];
 
     if (reachedStep?.reachedDrain) {
-      // SUCCESS — liquid reached the drain!
       const newCombo = s.combo + 1;
       const stepsUsed = nextStep;
       const timeBonus = Math.max(0, Math.floor(s.globalTime * 3));
       const livesBonus = s.lives * 150;
-      const stepsPenalty = Math.max(0, (stepsUsed - 8) * 10); // longer paths = slightly less
+      const stepsPenalty = Math.max(0, (stepsUsed - 8) * 10);
       const roundScore = 600 + timeBonus + livesBonus - stepsPenalty;
-      const timeTaken = 0; // not tracked per-round in flow mode
 
       setState({
         ...flowStepUpdate,
@@ -570,68 +543,45 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         bestCombo: Math.max(s.bestCombo, newCombo),
         totalCorrect: s.totalCorrect + 1,
         roundsCompleted: s.roundsCompleted + 1,
-        roundTimes: [...s.roundTimes, timeTaken],
+        roundTimes: [...s.roundTimes, 0],
         phase: 'round_transition',
         feedback: 'solved',
-        lastRoundMoves: s.moves,
-        lastRoundTime: 0,
-        lastRoundSolved: true,
+        lastRoundMoves: s.moves, lastRoundTime: 0, lastRoundSolved: true,
       });
-
+      // Stop flow interval — round over
+      if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
       setTimeout(() => {
         if (gameEndedRef.current) return;
-        const cur = stateRef.current;
-        if (cur.phase !== 'round_transition') return;
-        handlersRef.current.advanceRound();
+        if (stateRef.current.phase === 'round_transition') handlersRef.current.advanceRound();
       }, 2000);
       return;
     }
 
     if (reachedStep?.isDeadEnd) {
-      // Dead end — lose a life, pause the flow
       const newLives = s.lives - 1;
-
       if (newLives <= 0) {
-        // No lives left — round failed
         setState({
-          flowFilledCells: newFilled,
-          lives: 0,
-          phase: 'round_transition',
-          feedback: 'dead_end',
-          lastRoundMoves: s.moves,
-          lastRoundTime: 0,
-          lastRoundSolved: false,
-          combo: 0,
+          flowFilledCells: newFilled, lives: 0,
+          phase: 'round_transition', feedback: 'dead_end',
+          lastRoundMoves: s.moves, lastRoundTime: 0, lastRoundSolved: false, combo: 0,
         });
+        if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
         setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
         return;
       }
-
-      // Pause flow so player can fix pipes
       setState({
         ...flowStepUpdate,
-        lives: newLives,
-        flowPaused: true,
-        flowDeadEndKey: s.flowDeadEndKey + 1,
-        feedback: 'dead_end',
+        lives: newLives, flowPaused: true,
+        flowDeadEndKey: s.flowDeadEndKey + 1, feedback: 'dead_end',
       });
-
-      // Resume flow after pause — check if player fixed the pipes
       setTimeout(() => {
         if (gameEndedRef.current) return;
         const cur = stateRef.current;
         if (cur.phase === 'playing') {
-          // Re-trace path with updated pipe positions
           const freshSteps = traceFlowPath(gridRef.current!);
           const stepIdx = Math.min(flowStepRef.current, freshSteps.length - 1);
-          // If the dead-end step is still a dead end, stay paused
           if (stepIdx >= 0 && stepIdx < freshSteps.length && freshSteps[stepIdx].isDeadEnd) {
-            // Still broken — re-pause to keep showing "Fix the pipes!"
-            setState({
-              flowPaused: true,
-              flowDeadEndKey: cur.flowDeadEndKey + 1,
-              feedback: 'dead_end',
-            });
+            setState({ flowPaused: true, flowDeadEndKey: cur.flowDeadEndKey + 1, feedback: 'dead_end' });
             return;
           }
           const newFilledAfterFix = new Set<string>();
@@ -646,93 +596,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
     // Normal advance — just update filled cells and step
     setState(flowStepUpdate);
-    lastFlowAdvanceRef.current = Date.now();
-
-    // CRITICAL FIX: Check if the NEXT frontier (steps[nextStep]) is a dead end or drain.
-    // flowTick checks steps[nextStep-1] (the cell that just filled) above, but the dead end
-    // is often one step ahead. Without this, frontierCell returns null, no FrontierWater
-    // renders, and flow gets permanently stuck.
-    const nextFrontierIdx = nextStep;
-    if (nextFrontierIdx < steps.length) {
-      const nextFrontier = steps[nextFrontierIdx];
-      if (nextFrontier.isDeadEnd) {
-        // The next cell to fill is a dead end — handle it after state settles
-        setTimeout(() => {
-          if (gameEndedRef.current) return;
-          const cur = stateRef.current;
-          if (cur.phase !== 'playing') return;
-          const newLives = cur.lives - 1;
-          if (newLives <= 0) {
-            setState({
-              lives: 0,
-              phase: 'round_transition',
-              feedback: 'dead_end',
-              lastRoundMoves: cur.moves,
-              lastRoundTime: 0,
-              lastRoundSolved: false,
-              combo: 0,
-            });
-            setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
-            return;
-          }
-          setState({
-            lives: newLives,
-            flowPaused: true,
-            flowDeadEndKey: cur.flowDeadEndKey + 1,
-            feedback: 'dead_end',
-          });
-          setTimeout(() => {
-            if (gameEndedRef.current) return;
-            const c2 = stateRef.current;
-            if (c2.phase === 'playing') {
-              const freshSteps = traceFlowPath(gridRef.current!);
-              const si = Math.min(flowStepRef.current, freshSteps.length - 1);
-              if (si >= 0 && si < freshSteps.length && freshSteps[si].isDeadEnd) {
-                setState({ flowPaused: true, flowDeadEndKey: c2.flowDeadEndKey + 1, feedback: 'dead_end' });
-                return;
-              }
-              const nf = new Set<string>();
-              for (let i = 0; i < flowStepRef.current && i < freshSteps.length; i++) nf.add(`${freshSteps[i].row},${freshSteps[i].col}`);
-              setState({ flowPaused: false, feedback: null, flowFilledCells: nf });
-            }
-          }, FLOW_PAUSE_MS);
-        }, 50);
-        return; // skip the rest — dead end handling scheduled above
-      }
-      if (nextFrontier.reachedDrain) {
-        // The drain is the next frontier — handle drain reached after state settles
-        setTimeout(() => {
-          if (gameEndedRef.current) return;
-          const cur = stateRef.current;
-          if (cur.phase !== 'playing') return;
-          const newCombo = cur.combo + 1;
-          const stepsUsed = flowStepRef.current;
-          const timeBonus = Math.max(0, Math.floor(cur.globalTime * 3));
-          const livesBonus = cur.lives * 150;
-          const stepsPenalty = Math.max(0, (stepsUsed - 8) * 10);
-          const roundScore = 600 + timeBonus + livesBonus - stepsPenalty;
-          setState({
-            score: cur.score + roundScore,
-            combo: newCombo,
-            bestCombo: Math.max(cur.bestCombo, newCombo),
-            totalCorrect: cur.totalCorrect + 1,
-            roundsCompleted: cur.roundsCompleted + 1,
-            roundTimes: [...cur.roundTimes, 0],
-            phase: 'round_transition',
-            feedback: 'solved',
-            lastRoundMoves: cur.moves,
-            lastRoundTime: 0,
-            lastRoundSolved: true,
-          });
-          setTimeout(() => {
-            if (gameEndedRef.current) return;
-            if (stateRef.current.phase === 'round_transition') handlersRef.current.advanceRound();
-          }, 2000);
-        }, 50);
-        return;
-      }
-    }
-  }, [setState, endGame, isFlow]); // FIX #3: removed `puzzle` from deps — use gridRef.current inside
+  }, [setState, endGame, isFlow]);
 
   // ─── Advance Round ──────────────────────────────────────────────────────────
 
@@ -745,6 +609,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     const nextRound = roundsRef.current[nextIdx];
     gridRef.current = JSON.parse(JSON.stringify(nextRound.puzzle));
     flowStepRef.current = 0;
+    if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
 
     setState({
       phase: 'round_intro',
@@ -852,7 +717,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       gridRef.current = JSON.parse(JSON.stringify(rounds[0].puzzle));
     }
     timerRef.current = setInterval(() => handlersRef.current.tick(), 1000);
-    // Flow mode: countdown before activating frontier animation
+    // Flow mode: countdown before activating flow
     if (isFlow) {
       const countdownInterval = setInterval(() => {
         if (gameEndedRef.current) { clearInterval(countdownInterval); return; }
@@ -861,27 +726,15 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         const next = cur.flowCountdown - 1;
         if (next <= 0) {
           clearInterval(countdownInterval);
-          lastFlowAdvanceRef.current = Date.now();
           if (!gameEndedRef.current) setState({ flowActive: true, flowCountdown: 0 });
         } else {
           setState({ flowCountdown: next });
         }
       }, 1000);
-      // Fallback: detect stuck flow and force-advance.
-      lastFlowAdvanceRef.current = Date.now();
-      const flowFallback = setInterval(() => {
-        if (gameEndedRef.current) return;
-        const s = stateRef.current;
-        if (s.phase !== 'playing' || s.flowPaused || !s.flowActive) return;
-        const elapsed = Date.now() - lastFlowAdvanceRef.current;
-        if (elapsed > 3000) {
-          handlersRef.current.flowTick();
-        }
-      }, 1000);
       return () => {
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
         clearInterval(countdownInterval);
-        clearInterval(flowFallback);
         gameEndedRef.current = true;
       };
     }
@@ -890,6 +743,24 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       gameEndedRef.current = true;
     };
   }, []);
+
+  // ─── Flow interval: start/stop based on flowActive and flowPaused ───────
+  // This is the KEY CHANGE: a simple setInterval drives flow advancement.
+
+  useEffect(() => {
+    if (!isFlow) return;
+    if (state.flowActive && !state.flowPaused && state.phase === 'playing') {
+      if (flowIntervalRef.current) clearInterval(flowIntervalRef.current);
+      flowIntervalRef.current = setInterval(() => {
+        handlersRef.current.flowTick();
+      }, FLOW_TICK_MS);
+    } else {
+      if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
+    }
+    return () => {
+      if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
+    };
+  }, [isFlow, state.flowActive, state.flowPaused, state.phase]);
 
   // ─── Round intro auto-advance ───────────────────────────────────────────────
 
@@ -901,7 +772,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       if (gameEndedRef.current) return;
       gridRef.current = JSON.parse(JSON.stringify(r.puzzle));
       flowStepRef.current = 0;
-      lastFlowAdvanceRef.current = Date.now();
       setState({
         phase: 'playing',
         roundTime: isFlow ? 999 : r.roundTime,
@@ -1060,6 +930,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         <button
           onClick={() => {
             if (timerRef.current) clearInterval(timerRef.current);
+            if (flowIntervalRef.current) clearInterval(flowIntervalRef.current);
             gameEndedRef.current = true;
             useGameStore.getState().setScreen('home');
           }}
@@ -1201,8 +1072,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
                   onClick={() => handlersRef.current.onCellTap(r, c)}
                   flowSpeed={isFilled ? getFlowSpeed(r, c) : 'classic'}
                   segFlowDirs={isFilled ? flowDirMap.get(`${r},${c}`) : undefined}
-                  frontierInfo={isFrontier ? { entryDir: frontierCell.entryDir, exitDir: frontierCell.exitDir, flowDir: frontierCell.flowDir } : undefined}
-                  onFrontierFilled={isFrontier ? () => handlersRef.current.flowTick() : undefined}
+                  frontierInfo={isFrontier ? { entryDir: frontierCell.entryDir, exitDir: frontierCell.exitDir, flowDir: frontierCell.flowDir, fillKey: frontierCell.fillKey } : undefined}
                 />
               </div>
             );

@@ -35,19 +35,20 @@ for (let i = 0; i < steps.length; i++) {
 // Check if the cell after step 0 connects back
 if (steps.length >= 1 && steps[0].exitDir) {
   const s0 = steps[0];
+  const exitDir: string = s0.exitDir as string;
   const DR: Record<string, [number, number]> = {
     up: [-1, 0], down: [1, 0], left: [0, -1], right: [0, 1],
   };
   const OPPOSITE: Record<string, string> = {
     up: 'down', down: 'up', left: 'right', right: 'left',
   };
-  const [dr, dc] = DR[s0.exitDir];
+  const [dr, dc] = DR[exitDir];
   const nr = s0.row + dr;
   const nc = s0.col + dc;
   if (nr >= 0 && nr < puzzle.gridSize && nc >= 0 && nc < puzzle.gridSize) {
     const neighbor = puzzle.grid[nr][nc];
     const nConns = getConnections(neighbor.type, neighbor.rotation);
-    const needsDir = OPPOSITE[s0.exitDir];
+    const needsDir = OPPOSITE[exitDir];
     console.log(`\n  Step 0 exits '${s0.exitDir}' → neighbor (${nr},${nc}) type=${neighbor.type} rot=${neighbor.rotation} conns=[${nConns.join(',')}]`);
     console.log(`  Neighbor needs '${needsDir}' connection: ${nConns.includes(needsDir) ? 'YES ✓' : 'NO ✗ ← DEAD END'}`);
   }
