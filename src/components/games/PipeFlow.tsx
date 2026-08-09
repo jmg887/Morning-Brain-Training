@@ -181,9 +181,9 @@ interface PipeCellProps {
 function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed, segFlowDirs, frontierInfo }: PipeCellProps) {
   const half = size / 2;
   const thickness = Math.max(size * 0.22, 6);
-  // Treat frontier as visually filled (blue pipes, light bg)
   const visuallyFilled = isFilled || isFrontier;
-  const color = isSource ? SOURCE_COLOR : isDrain ? (isDrainConnected ? DRAIN_COLOR : '#CC3333') : visuallyFilled ? PIPE_FILLED : PIPE_COLOR;
+  // Base pipe stays grey always; liquid overlay provides the blue water effect
+  const color = isSource ? SOURCE_COLOR : isDrain ? (isDrainConnected ? DRAIN_COLOR : '#CC3333') : PIPE_COLOR;
   // Cell background stays neutral — only the pipe interior shows liquid color
   const bgColor = isSource ? '#E8FFE0' : isDrain ? '#FFE8E5' : '#F5F5F5';
 
