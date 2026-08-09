@@ -110,30 +110,20 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
   const color = isSource ? SOURCE_COLOR : isDrain ? (isDrainConnected ? DRAIN_COLOR : '#CC3333') : isFilled ? PIPE_FILLED : PIPE_COLOR;
   const bgColor = isSource ? '#E8FFE0' : isDrain ? '#FFE8E5' : isFilled ? WATER_LIGHT : '#F5F5F5';
 
-  // Build path segments from connections
+  // Build path segments from connections, each with flow direction for pattern animation
   const conns = getConnections(type as 'straight' | 'bend' | 'tee' | 'cross' | 'dead', rotation);
-  const segments: string[] = [];
+  const segments: { d: string; dir: string }[] = [];
   for (const dir of conns) {
     switch (dir) {
-      case 'up':    segments.push(`M ${half} ${half} L ${half} 0`); break;
-      case 'down':  segments.push(`M ${half} ${half} L ${half} ${size}`); break;
-      case 'left':  segments.push(`M ${half} ${half} L 0 ${half}`); break;
-      case 'right': segments.push(`M ${half} ${half} L ${size} ${half}`); break;
+      case 'up':    segments.push({ d: `M ${half} ${half} L ${half} 0`, dir: 'up' }); break;
+      case 'down':  segments.push({ d: `M ${half} ${half} L ${half} ${size}`, dir: 'down' }); break;
+      case 'left':  segments.push({ d: `M ${half} ${half} L 0 ${half}`, dir: 'left' }); break;
+      case 'right': segments.push({ d: `M ${half} ${half} L ${size} ${half}`, dir: 'right' }); break;
     }
   }
 
   // Build dot at center
   const dotR = thickness * 0.45;
-
-  // Water colors: stagger across segments for depth
-  const waterColors = ['#7DD3FC', '#38BDF8', '#1CB0F6', '#0284C7'];
-
-  // Pick animation class based on flow speed
-  const dashAnim = flowSpeed === 'frontier'
-    ? 'dash-flow-fast'
-    : flowSpeed === 'flow'
-      ? 'dash-flow-fast'
-      : 'dash-flow-classic';
 
   // Glow animation class
   const glowAnim = isFrontier
@@ -158,22 +148,50 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         {/* Pipe segments (base layer) */}
-        {segments.map((d, i) => (
-          <path key={i} d={d} stroke={color} strokeWidth={thickness} strokeLinecap="round" fill="none" />
+        {segments.map((seg, i) => (
+          <path key={i} d={seg.d} stroke={color} strokeWidth={thickness} strokeLinecap="round" fill="none" />
         ))}
-        {/* Liquid-filled segments: moving dashes with gradient colors */}
-        {isFilled && segments.map((d, i) => (
-          <path
-            key={`liq-${i}`}
-            d={d}
-            stroke={waterColors[i % waterColors.length]}
-            strokeWidth={thickness - 2}
-            strokeLinecap="round"
-            fill="none"
-            strokeDasharray="8 6"
-            className={dashAnim}
-          />
-        ))}
+        {/* Liquid-filled segments: water texture pattern fill that flows */}
+        {isFilled && segments.map((seg, i) => {
+          // Pattern ID per direction so each can animate independently
+          const pid = `water-${seg.dir}`;
+          // Animate pattern offset based on direction and speed
+          const dur = flowSpeed === 'frontier' || flowSpeed === 'flow' ? 0.5 : 0.8;
+          // Offset direction: pattern scrolls along the pipe's flow axis
+          const animAttr = seg.dir === 'up' ? 'y'
+            : seg.dir === 'down' ? 'y'
+            : seg.dir === 'left' ? 'x'
+            : 'x';
+          const animFrom = seg.dir === 'up' ? '0' : seg.dir === 'down' ? '0' : seg.dir === 'left' ? '0' : '0';
+          const animTo = seg.dir === 'up' ? '-64' : seg.dir === 'down' ? '64' : seg.dir === 'left' ? '-64' : '64';
+          return (
+            <g key={`liq-${i}`}>
+              <defs>
+                <pattern
+                  id={`${pid}-${i}`}
+                  patternUnits="userSpaceOnUse"
+                  width="64" height="64"
+                >
+                  <animate
+                    attributeName={animAttr}
+                    from={animFrom}
+                    to={animTo}
+                    dur={`${dur}s`}
+                    repeatCount="indefinite"
+                  />
+                  <image href="/water-tile.png" x="0" y="0" width="64" height="64" />
+                </pattern>
+              </defs>
+              <path
+                d={seg.d}
+                stroke={`url(#${pid}-${i})`}
+                strokeWidth={thickness - 2}
+                strokeLinecap="round"
+                fill="none"
+              />
+            </g>
+          );
+        })}
         {/* Center dot */}
         <circle cx={half} cy={half} r={dotR} fill={color} />
         {/* Center bubble glow when filled (only on junctions) */}
@@ -937,20 +955,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         @keyframes float-up { 0% { opacity: 1; transform: translateY(0) translateX(-50%); } 100% { opacity: 0; transform: translateY(-60px) translateX(-50%); } }
         @keyframes slide-up { 0% { opacity: 0; transform: translateY(30px); } 100% { opacity: 1; transform: translateY(0); } }
         @keyframes flow-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }
-
-        /* ── Water: moving dashes ── */
-        @keyframes dash-classic {
-          to { stroke-dashoffset: -14; }
-        }
-        @keyframes dash-fast {
-          to { stroke-dashoffset: -14; }
-        }
-        .dash-flow-classic {
-          animation: dash-classic 0.8s linear infinite;
-        }
-        .dash-flow-fast {
-          animation: dash-fast 0.5s linear infinite;
-        }
 
         /* ── Water: pulsing cell glow ── */
         @keyframes glow-classic {
