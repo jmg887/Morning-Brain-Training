@@ -19,6 +19,7 @@ const DRAIN_COLOR = '#FF3B30';
 const GLOBAL_TIME = 420; // 7 minutes total session
 const FLOW_FILL_DURATION = 1.8; // seconds to fill one cell (the payoff!)
 const FLOW_PAUSE_MS = 2500; // pause after losing a life
+const FLOW_PREP_SECONDS = 5; // seconds to prepare before flow starts
 const MAX_LIVES = 3;
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
@@ -49,6 +50,7 @@ interface PlayState {
   flowDeadEndKey: number; // for triggering shake animation
   flowStep: number; // tracked in state for reactivity
   flowActive: boolean; // whether the frontier CSS-transition fill should be running
+  flowCountdown: number; // seconds remaining before flow starts (0 = flowing)
 }
 
 // ─── Round Generation ───────────────────────────────────────────────────────────
@@ -88,6 +90,7 @@ function createInitialState(isFlow: boolean): PlayState {
     flowDeadEndKey: 0,
     flowStep: 0,
     flowActive: false,
+    flowCountdown: isFlow ? FLOW_PREP_SECONDS : 0,
   };
 }
 
@@ -849,15 +852,22 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       gridRef.current = JSON.parse(JSON.stringify(rounds[0].puzzle));
     }
     timerRef.current = setInterval(() => handlersRef.current.tick(), 1000);
-    // Flow mode: activate frontier animation after round intro
+    // Flow mode: countdown before activating frontier animation
     if (isFlow) {
-      setTimeout(() => {
-        if (!gameEndedRef.current) setState({ flowActive: true });
-      }, 2200);
+      const countdownInterval = setInterval(() => {
+        if (gameEndedRef.current) { clearInterval(countdownInterval); return; }
+        const cur = stateRef.current;
+        if (cur.phase !== 'playing') return;
+        const next = cur.flowCountdown - 1;
+        if (next <= 0) {
+          clearInterval(countdownInterval);
+          lastFlowAdvanceRef.current = Date.now();
+          if (!gameEndedRef.current) setState({ flowActive: true, flowCountdown: 0 });
+        } else {
+          setState({ flowCountdown: next });
+        }
+      }, 1000);
       // Fallback: detect stuck flow and force-advance.
-      // Normally FrontierWater onTransitionEnd drives flowTick, but transitions
-      // can fail to fire (React key reuse, browser quirks, etc.).
-      // If no advance in >3s and flow is active, force-advance.
       lastFlowAdvanceRef.current = Date.now();
       const flowFallback = setInterval(() => {
         if (gameEndedRef.current) return;
@@ -865,12 +875,12 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         if (s.phase !== 'playing' || s.flowPaused || !s.flowActive) return;
         const elapsed = Date.now() - lastFlowAdvanceRef.current;
         if (elapsed > 3000) {
-          // Flow hasn't advanced in over 3s (fill duration is 1.8s) — stuck!
           handlersRef.current.flowTick();
         }
       }, 1000);
       return () => {
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        clearInterval(countdownInterval);
         clearInterval(flowFallback);
         gameEndedRef.current = true;
       };
@@ -901,13 +911,8 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         flowPaused: false,
         flowStep: 0,
         flowActive: false,
+        flowCountdown: isFlow ? FLOW_PREP_SECONDS : 0,
       });
-      // Start frontier animation after a short delay so player sees the grid
-      if (isFlow) {
-        setTimeout(() => {
-          if (!gameEndedRef.current) setState({ flowActive: true });
-        }, 800);
-      }
     }, 1800);
     return () => clearTimeout(t);
   }, [state.phase, state.roundIndex, setState, isFlow]);
@@ -1100,6 +1105,11 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
           {state.flowPaused && (
             <span className="text-xs font-bold ml-2 px-2 py-0.5 rounded-full animate-pulse" style={{ background: '#FFE8E5', color: '#FF3B30' }}>
               Fix the pipes!
+            </span>
+          )}
+          {isFlow && state.flowCountdown > 0 && !state.flowPaused && (
+            <span className="text-xs font-bold ml-2 px-2 py-0.5 rounded-full animate-pulse" style={{ background: WATER_LIGHT, color: WATER_COLOR }}>
+              Flow in {state.flowCountdown}...
             </span>
           )}
         </div>

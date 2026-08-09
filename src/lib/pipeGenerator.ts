@@ -282,6 +282,26 @@ function buildPuzzle(size: number, rng: () => number): PipePuzzle | null {
     }
   }
 
+  // CRITICAL: After random rotation, the source MUST still have a 'left' connection
+  // (water enters from outside the left edge) and the drain MUST have a 'right'
+  // connection (water exits to outside the right edge). Without these, flow mode
+  // immediately dead-ends. Find a rotation that preserves the boundary connection.
+  const sourceCell = grid[source.row][source.col];
+  for (let rot = 0; rot < 4; rot++) {
+    if (getConnections(sourceCell.type, rot).includes('left')) {
+      sourceCell.rotation = rot;
+      break;
+    }
+  }
+
+  const drainCell = grid[drain.row][drain.col];
+  for (let rot = 0; rot < 4; rot++) {
+    if (getConnections(drainCell.type, rot).includes('right')) {
+      drainCell.rotation = rot;
+      break;
+    }
+  }
+
   // Calculate difficulty based on grid size and path length
   const difficulty = size <= 4 ? 1 : size <= 5 ? 2 : 3;
 
