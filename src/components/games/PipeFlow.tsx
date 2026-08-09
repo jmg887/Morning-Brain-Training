@@ -216,20 +216,13 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
       }}
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ overflow: 'visible' }}>
-        {/* Pipe segments — 3D tube: outline → gradient body → specular highlight */}
+        {/* Pipe segments — 3D tube: dark outline + gradient body */}
         {!isSource && !isDrain && segments.map((seg, i) => {
           const isHoriz = seg.dir === 'left' || seg.dir === 'right';
-          const gradBody = isHoriz ? 'url(#pipe-grad-h)' : 'url(#pipe-grad-v)';
-          const gradOutline = isHoriz ? 'url(#pipe-outline-h)' : 'url(#pipe-outline-v)';
           return (
             <g key={i}>
-              {/* Layer 1: dark outline / shadow */}
-              <path d={seg.d} stroke={gradOutline} strokeWidth={thickness + 3} strokeLinecap="round" fill="none" />
-              {/* Layer 2: gradient body (cylindrical 3D effect) */}
-              <path d={seg.d} stroke={gradBody} strokeWidth={thickness} strokeLinecap="round" fill="none" />
-              {/* Layer 3: specular highlight (thin bright stripe near top-left) */}
-              <path d={seg.d} stroke="rgba(255,255,255,0.22)" strokeWidth={thickness * 0.25} strokeLinecap="round" fill="none"
-                style={{ transform: isHoriz ? `translate(0, -${thickness * 0.2}px)` : `translate(-${thickness * 0.2}px, 0)` }} />
+              <path d={seg.d} stroke="#333" strokeWidth={thickness + 2} strokeLinecap="round" fill="none" />
+              <path d={seg.d} stroke={isHoriz ? 'url(#pipe-grad-h)' : 'url(#pipe-grad-v)'} strokeWidth={thickness} strokeLinecap="round" fill="none" />
             </g>
           );
         })}
@@ -1048,15 +1041,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
             <stop offset="25%" stopColor="#777" />
             <stop offset="75%" stopColor="#555" />
             <stop offset="100%" stopColor="#3a3a3a" />
-          </linearGradient>
-          {/* Pipe outline/shadow */}
-          <linearGradient id="pipe-outline-h" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#4a4a4a" />
-            <stop offset="100%" stopColor="#222" />
-          </linearGradient>
-          <linearGradient id="pipe-outline-v" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#4a4a4a" />
-            <stop offset="100%" stopColor="#222" />
           </linearGradient>
           {/* Center joint/cap radial gradient */}
           <radialGradient id="pipe-joint-grad" cx="40%" cy="35%" r="60%">
