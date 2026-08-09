@@ -13,7 +13,6 @@ const WATER_COLOR = '#1CB0F6';
 const WATER_LIGHT = '#E8F6FF';
 const GRID_BG = '#E8E8E8';
 const PIPE_COLOR = '#555';
-const PIPE_FILLED = '#1CB0F6';
 const SOURCE_COLOR = '#58CC02';
 const DRAIN_COLOR = '#FF3B30';
 const GLOBAL_TIME = 420; // 7 minutes total session
@@ -217,8 +216,25 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
       }}
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ overflow: 'visible' }}>
-        {/* Pipe segments (base layer) */}
-        {segments.map((seg, i) => (
+        {/* Pipe segments — 3D tube: outline → gradient body → specular highlight */}
+        {!isSource && !isDrain && segments.map((seg, i) => {
+          const isHoriz = seg.dir === 'left' || seg.dir === 'right';
+          const gradBody = isHoriz ? 'url(#pipe-grad-h)' : 'url(#pipe-grad-v)';
+          const gradOutline = isHoriz ? 'url(#pipe-outline-h)' : 'url(#pipe-outline-v)';
+          return (
+            <g key={i}>
+              {/* Layer 1: dark outline / shadow */}
+              <path d={seg.d} stroke={gradOutline} strokeWidth={thickness + 3} strokeLinecap="round" fill="none" />
+              {/* Layer 2: gradient body (cylindrical 3D effect) */}
+              <path d={seg.d} stroke={gradBody} strokeWidth={thickness} strokeLinecap="round" fill="none" />
+              {/* Layer 3: specular highlight (thin bright stripe near top-left) */}
+              <path d={seg.d} stroke="rgba(255,255,255,0.22)" strokeWidth={thickness * 0.25} strokeLinecap="round" fill="none"
+                style={{ transform: isHoriz ? `translate(0, -${thickness * 0.2}px)` : `translate(-${thickness * 0.2}px, 0)` }} />
+            </g>
+          );
+        })}
+        {/* Source/Drain: flat colored pipes (keep simple for markers) */}
+        {(isSource || isDrain) && segments.map((seg, i) => (
           <path key={i} d={seg.d} stroke={color} strokeWidth={thickness} strokeLinecap="round" fill="none" />
         ))}
         {/* Liquid-filled segments: shared water texture pattern, direction-aware */}
@@ -247,8 +263,14 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
             fillKey={frontierInfo.fillKey}
           />
         )}
-        {/* Center dot — hidden when liquid is present (liquid overlay covers center) */}
-        {!isFilled && !isFrontier && <circle cx={half} cy={half} r={dotR} fill={color} />}
+        {/* Center joint cap — 3D with radial gradient (hidden when liquid present) */}
+        {!isFilled && !isFrontier && !isSource && !isDrain && (
+          <g>
+            <circle cx={half} cy={half} r={dotR + 2} fill="url(#pipe-joint-shadow)" />
+            <circle cx={half} cy={half} r={dotR + 0.5} fill="url(#pipe-joint-grad)" />
+            <circle cx={half - dotR * 0.2} cy={half - dotR * 0.2} r={dotR * 0.3} fill="rgba(255,255,255,0.15)" />
+          </g>
+        )}
         {/* Source icon */}
         {isSource && (
           <>
@@ -1012,26 +1034,62 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         {/* Shared water texture pattern defs — 4 actual flow directions */}
         <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
           <defs>
-            {/* water-flow-right: texture scrolls right (water flows rightward) */}
-            <pattern id="water-flow-right" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="x" from="0" to="64" dur="1s" repeatCount="indefinite" />
-              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
-            </pattern>
-            {/* water-flow-left: texture scrolls left (water flows leftward) */}
-            <pattern id="water-flow-left" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="x" from="0" to="-64" dur="1s" repeatCount="indefinite" />
-              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
-            </pattern>
-            {/* water-flow-down: texture scrolls down (water flows downward) */}
-            <pattern id="water-flow-down" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="y" from="0" to="64" dur="1s" repeatCount="indefinite" />
-              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
-            </pattern>
-            {/* water-flow-up: texture scrolls up (water flows upward) */}
-            <pattern id="water-flow-up" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="y" from="0" to="-64" dur="1s" repeatCount="indefinite" />
-              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
-            </pattern>
+          {/* ── 3D Pipe Gradients ── */}
+          {/* Horizontal pipe: light from top, shadow at bottom */}
+          <linearGradient id="pipe-grad-h" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#9a9a9a" />
+            <stop offset="25%" stopColor="#777" />
+            <stop offset="75%" stopColor="#555" />
+            <stop offset="100%" stopColor="#3a3a3a" />
+          </linearGradient>
+          {/* Vertical pipe: light from left, shadow at right */}
+          <linearGradient id="pipe-grad-v" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#9a9a9a" />
+            <stop offset="25%" stopColor="#777" />
+            <stop offset="75%" stopColor="#555" />
+            <stop offset="100%" stopColor="#3a3a3a" />
+          </linearGradient>
+          {/* Pipe outline/shadow */}
+          <linearGradient id="pipe-outline-h" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#4a4a4a" />
+            <stop offset="100%" stopColor="#222" />
+          </linearGradient>
+          <linearGradient id="pipe-outline-v" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#4a4a4a" />
+            <stop offset="100%" stopColor="#222" />
+          </linearGradient>
+          {/* Center joint/cap radial gradient */}
+          <radialGradient id="pipe-joint-grad" cx="40%" cy="35%" r="60%">
+            <stop offset="0%" stopColor="#999" />
+            <stop offset="50%" stopColor="#666" />
+            <stop offset="100%" stopColor="#3a3a3a" />
+          </radialGradient>
+          {/* Joint shadow ring */}
+          <radialGradient id="pipe-joint-shadow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#333" />
+            <stop offset="100%" stopColor="#1a1a1a" />
+          </radialGradient>
+          {/* ── Water Flow Patterns ── */}
+          {/* water-flow-right: texture scrolls right (water flows rightward) */}
+          <pattern id="water-flow-right" patternUnits="userSpaceOnUse" width="64" height="64">
+            <animate attributeName="x" from="0" to="64" dur="1s" repeatCount="indefinite" />
+            <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
+          </pattern>
+          {/* water-flow-left: texture scrolls left (water flows leftward) */}
+          <pattern id="water-flow-left" patternUnits="userSpaceOnUse" width="64" height="64">
+            <animate attributeName="x" from="0" to="-64" dur="1s" repeatCount="indefinite" />
+            <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
+          </pattern>
+          {/* water-flow-down: texture scrolls down (water flows downward) */}
+          <pattern id="water-flow-down" patternUnits="userSpaceOnUse" width="64" height="64">
+            <animate attributeName="y" from="0" to="64" dur="1s" repeatCount="indefinite" />
+            <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
+          </pattern>
+          {/* water-flow-up: texture scrolls up (water flows upward) */}
+          <pattern id="water-flow-up" patternUnits="userSpaceOnUse" width="64" height="64">
+            <animate attributeName="y" from="0" to="-64" dur="1s" repeatCount="indefinite" />
+            <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
+          </pattern>
           </defs>
         </svg>
 
