@@ -181,7 +181,6 @@ interface PipeCellProps {
 function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed, segFlowDirs, frontierInfo }: PipeCellProps) {
   const half = size / 2;
   const thickness = Math.max(size * 0.22, 6);
-  const visuallyFilled = isFilled || isFrontier;
   // Base pipe stays grey always; liquid overlay provides the blue water effect
   const color = isSource ? SOURCE_COLOR : isDrain ? (isDrainConnected ? DRAIN_COLOR : '#CC3333') : PIPE_COLOR;
   // Cell background stays neutral — only the pipe interior shows liquid color
@@ -201,9 +200,6 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
 
   // Build dot at center
   const dotR = thickness * 0.45;
-
-  // Bubble only on cells with 2+ connections (not dead ends)
-  const hasBubble = visuallyFilled && conns.length >= 2;
 
   return (
     <button
@@ -249,16 +245,6 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
         )}
         {/* Center dot */}
         <circle cx={half} cy={half} r={dotR} fill={color} />
-        {/* Center bubble glow when filled (only on junctions) */}
-        {hasBubble && (
-          <circle
-            cx={half}
-            cy={half}
-            r={dotR + 1}
-            fill="#7DD3FC"
-            className="water-bubble"
-          />
-        )}
         {/* Source icon */}
         {isSource && (
           <>
