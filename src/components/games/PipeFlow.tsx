@@ -17,7 +17,7 @@ const PIPE_FILLED = '#1CB0F6';
 const SOURCE_COLOR = '#58CC02';
 const DRAIN_COLOR = '#FF3B30';
 const GLOBAL_TIME = 420; // 7 minutes total session
-const FLOW_TICK_MS = 1500; // liquid advances one pipe every 1.5s
+const FLOW_FILL_DURATION = 1.8; // seconds to fill one cell (the payoff!)
 const FLOW_PAUSE_MS = 2500; // pause after losing a life
 const MAX_LIVES = 3;
 
@@ -48,6 +48,7 @@ interface PlayState {
   flowPaused: boolean; // paused after dead end hit
   flowDeadEndKey: number; // for triggering shake animation
   flowStep: number; // tracked in state for reactivity
+  flowActive: boolean; // whether the frontier CSS-transition fill should be running
 }
 
 // ─── Round Generation ───────────────────────────────────────────────────────────
@@ -86,12 +87,70 @@ function createInitialState(isFlow: boolean): PlayState {
     flowPaused: false,
     flowDeadEndKey: 0,
     flowStep: 0,
+    flowActive: false,
   };
 }
 
 // ─── Direction helpers ──────────────────────────────────────────────────────
 
 const OPPOSITE_DIR: Record<string, string> = { up: 'down', down: 'up', left: 'right', right: 'left' };
+
+// ─── Frontier Water (progressive cell fill) ────────────────────────────────
+// Renders water gradually filling a cell from entry edge → center → exit edge
+// Uses CSS transition on stroke-dashoffset. Calls onFilled when complete.
+
+function edgePoint(dir: string, half: number, size: number): [number, number] {
+  switch (dir) {
+    case 'left':  return [0, half];
+    case 'right': return [size, half];
+    case 'up':    return [half, 0];
+    case 'down':  return [half, size];
+    default:     return [half, half];
+  }
+}
+
+function FrontierWater({ entryDir, exitDir, size, thickness, onFilled, flowDir }: {
+  entryDir: string;
+  exitDir: string;
+  size: number;
+  thickness: number;
+  onFilled: () => void;
+  flowDir: string;
+}) {
+  const [fillStarted, setFillStarted] = useState(false);
+  const half = size / 2;
+
+  const [ex, ey] = edgePoint(entryDir, half, size);
+  const [ox, oy] = edgePoint(exitDir, half, size);
+  // Path: entry edge → center → exit edge
+  const d = `M ${ex} ${ey} L ${half} ${half} L ${ox} ${oy}`;
+  const pathLength = size; // half + half
+
+  // Double-rAF: paint the initial hidden state first, then trigger transition
+  useEffect(() => {
+    const r1 = requestAnimationFrame(() => {
+      const r2 = requestAnimationFrame(() => setFillStarted(true));
+      // cleanup not needed — effect runs once
+    });
+    return () => cancelAnimationFrame(r1);
+  }, []);
+
+  return (
+    <path
+      d={d}
+      stroke={`url(#water-flow-${flowDir})`}
+      strokeWidth={thickness - 2}
+      strokeLinecap="round"
+      fill="none"
+      onTransitionEnd={(e) => { if (e.propertyName === 'stroke-dashoffset') onFilled(); }}
+      style={{
+        strokeDasharray: pathLength,
+        strokeDashoffset: fillStarted ? 0 : pathLength,
+        transition: fillStarted ? `stroke-dashoffset ${FLOW_FILL_DURATION}s linear` : 'none',
+      }}
+    />
+  );
+}
 
 // ─── Pipe Rendering Component ──────────────────────────────────────────────────
 
@@ -108,13 +167,19 @@ interface PipeCellProps {
   flowSpeed: 'classic' | 'flow' | 'frontier';
   /** For each segment direction, the actual flow direction of water through it */
   segFlowDirs?: Record<string, string>;
+  /** Progressive fill info for the frontier cell */
+  frontierInfo?: { entryDir: string; exitDir: string; flowDir: string };
+  /** Called when the frontier cell finishes filling */
+  onFrontierFilled?: () => void;
 }
 
-function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed, segFlowDirs }: PipeCellProps) {
+function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed, segFlowDirs, frontierInfo, onFrontierFilled }: PipeCellProps) {
   const half = size / 2;
   const thickness = Math.max(size * 0.22, 6);
-  const color = isSource ? SOURCE_COLOR : isDrain ? (isDrainConnected ? DRAIN_COLOR : '#CC3333') : isFilled ? PIPE_FILLED : PIPE_COLOR;
-  const bgColor = isSource ? '#E8FFE0' : isDrain ? '#FFE8E5' : isFilled ? WATER_LIGHT : '#F5F5F5';
+  // Treat frontier as visually filled (blue pipes, light bg)
+  const visuallyFilled = isFilled || isFrontier;
+  const color = isSource ? SOURCE_COLOR : isDrain ? (isDrainConnected ? DRAIN_COLOR : '#CC3333') : visuallyFilled ? PIPE_FILLED : PIPE_COLOR;
+  const bgColor = isSource ? '#E8FFE0' : isDrain ? '#FFE8E5' : visuallyFilled ? WATER_LIGHT : '#F5F5F5';
 
   // Build path segments from connections, each with flow direction for pattern animation
   const conns = getConnections(type as 'straight' | 'bend' | 'tee' | 'cross' | 'dead', rotation);
@@ -139,16 +204,16 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
       : 'water-glow-classic';
 
   // Bubble only on cells with 2+ connections (not dead ends)
-  const hasBubble = isFilled && conns.length >= 2;
+  const hasBubble = visuallyFilled && conns.length >= 2;
 
   return (
     <button
       onClick={onClick}
-      className={`absolute rounded-lg transition-all duration-150 active:scale-95 ${isFilled ? glowAnim : ''}`}
+      className={`absolute rounded-lg transition-all duration-150 active:scale-95 ${visuallyFilled ? glowAnim : ''}`}
       style={{
         width: size, height: size, left: 0, top: 0,
         background: bgColor,
-        border: `2px solid ${isFilled ? (isSource ? SOURCE_COLOR : isDrain ? DRAIN_COLOR : WATER_COLOR) + '40' : GRID_BG}`,
+        border: `2px solid ${visuallyFilled ? (isSource ? SOURCE_COLOR : isDrain ? DRAIN_COLOR : WATER_COLOR) + '40' : GRID_BG}`,
         cursor: 'pointer',
       }}
     >
@@ -159,7 +224,6 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
         ))}
         {/* Liquid-filled segments: shared water texture pattern, direction-aware */}
         {isFilled && segments.map((seg, i) => {
-          // Use computed flow direction if available, else fall back to segment direction
           const flowDir = segFlowDirs?.[seg.dir] ?? seg.dir;
           return (
             <path
@@ -172,6 +236,18 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
             />
           );
         })}
+        {/* Frontier: progressive water fill (entry→center→exit) */}
+        {isFrontier && frontierInfo && onFrontierFilled && (
+          <FrontierWater
+            key={`fw-${frontierInfo.entryDir}-${frontierInfo.exitDir}`}
+            entryDir={frontierInfo.entryDir}
+            exitDir={frontierInfo.exitDir}
+            size={size}
+            thickness={thickness}
+            onFilled={onFrontierFilled}
+            flowDir={frontierInfo.flowDir}
+          />
+        )}
         {/* Center dot */}
         <circle cx={half} cy={half} r={dotR} fill={color} />
         {/* Center bubble glow when filled (only on junctions) */}
@@ -231,7 +307,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   const stateRef = useRef(state);
   const roundsRef = useRef(rounds);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const flowTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const gameEndedRef = useRef(false);
   const gridRef = useRef<PipePuzzle | null>(null);
   const flowStepRef = useRef(0); // how many steps the liquid has advanced
@@ -295,18 +370,28 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   // Determine flow speed for cells
   const getFlowSpeed = useCallback((r: number, c: number): 'classic' | 'flow' | 'frontier' => {
     if (!isFlow) return 'classic';
-    if (state.flowPaused) return 'classic';
-    const p = gridRef.current;
-    if (!p) return 'classic';
-    // Check if this cell is the frontier
-    const steps = traceFlowPath(p);
-    const frontierIdx = Math.min(flowStepRef.current, steps.length - 1);
-    if (frontierIdx >= 0 && frontierIdx < steps.length) {
-      const f = steps[frontierIdx];
-      if (f.row === r && f.col === c && !f.reachedDrain && !f.isDeadEnd) return 'frontier';
-    }
     return 'flow';
-  }, [isFlow, state.flowPaused]);
+  }, [isFlow]);
+
+  // Compute the current frontier cell (the cell being progressively filled)
+  const frontierCell = useMemo(() => {
+    if (!isFlow || !gridRef.current || state.flowPaused || !state.flowActive) return null;
+    const steps = traceFlowPath(gridRef.current);
+    const idx = state.flowStep;
+    if (idx < 0 || idx >= steps.length) return null;
+    const step = steps[idx];
+    if (step.reachedDrain || step.isDeadEnd) return null;
+    const entryDir: string = step.entryDir ?? 'left';
+    const exitDir: string | null = step.exitDir;
+    if (!exitDir) return null;
+    return {
+      row: step.row,
+      col: step.col,
+      entryDir,
+      exitDir,
+      flowDir: exitDir, // water flows toward exit
+    };
+  }, [isFlow, state.flowPaused, state.flowActive, state.flowStep, state.flowFilledCells, state.moves]);
 
   // ─── End Game ──────────────────────────────────────────────────────────────
 
@@ -314,7 +399,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     if (gameEndedRef.current) return;
     gameEndedRef.current = true;
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
     setState({ phase: 'ended' });
   }, [setState]);
 
@@ -436,9 +520,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         lastRoundSolved: true,
       });
 
-      // Clear flow timer during transition
-      if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
-
       setTimeout(() => {
         if (gameEndedRef.current) return;
         const cur = stateRef.current;
@@ -464,7 +545,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
           lastRoundSolved: false,
           combo: 0,
         });
-        if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
         setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
         return;
       }
@@ -514,8 +594,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     gridRef.current = JSON.parse(JSON.stringify(nextRound.puzzle));
     flowStepRef.current = 0;
 
-    if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
-
     setState({
       phase: 'round_intro',
       roundIndex: nextIdx,
@@ -526,6 +604,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       flowStep: 0,
       lives: MAX_LIVES,
       flowPaused: false,
+      flowActive: false,
     });
   }, [setState, endGame, isFlow]);
 
@@ -622,18 +701,14 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       gridRef.current = JSON.parse(JSON.stringify(rounds[0].puzzle));
     }
     timerRef.current = setInterval(() => handlersRef.current.tick(), 1000);
-    // Flow mode: start the liquid flow timer
+    // Flow mode: activate frontier animation after round intro
     if (isFlow) {
-      // Small delay before liquid starts flowing (let player see the grid)
       setTimeout(() => {
-        if (!gameEndedRef.current) {
-          flowTimerRef.current = setInterval(() => handlersRef.current.flowTick(), FLOW_TICK_MS);
-        }
-      }, 2200); // after round intro
+        if (!gameEndedRef.current) setState({ flowActive: true });
+      }, 2200);
     }
     return () => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-      if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
       gameEndedRef.current = true;
     };
   }, []);
@@ -656,15 +731,12 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         lives: MAX_LIVES,
         flowPaused: false,
         flowStep: 0,
+        flowActive: false,
       });
-      // Start/restart flow timer for this round
+      // Start frontier animation after a short delay so player sees the grid
       if (isFlow) {
-        if (flowTimerRef.current) { clearInterval(flowTimerRef.current); flowTimerRef.current = null; }
-        // Small delay so player sees the grid before liquid starts
         setTimeout(() => {
-          if (!gameEndedRef.current) {
-            flowTimerRef.current = setInterval(() => handlersRef.current.flowTick(), FLOW_TICK_MS);
-          }
+          if (!gameEndedRef.current) setState({ flowActive: true });
         }, 800);
       }
     }, 1800);
@@ -814,7 +886,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         <button
           onClick={() => {
             if (timerRef.current) clearInterval(timerRef.current);
-            if (flowTimerRef.current) clearInterval(flowTimerRef.current);
             gameEndedRef.current = true;
             useGameStore.getState().setScreen('home');
           }}
@@ -899,22 +970,22 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
           <defs>
             {/* water-flow-right: texture scrolls right (water flows rightward) */}
             <pattern id="water-flow-right" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="x" from="0" to="64" dur="0.6s" repeatCount="indefinite" />
+              <animate attributeName="x" from="0" to="64" dur="1s" repeatCount="indefinite" />
               <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
             </pattern>
             {/* water-flow-left: texture scrolls left (water flows leftward) */}
             <pattern id="water-flow-left" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="x" from="0" to="-64" dur="0.6s" repeatCount="indefinite" />
+              <animate attributeName="x" from="0" to="-64" dur="1s" repeatCount="indefinite" />
               <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
             </pattern>
             {/* water-flow-down: texture scrolls down (water flows downward) */}
             <pattern id="water-flow-down" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="y" from="0" to="64" dur="0.6s" repeatCount="indefinite" />
+              <animate attributeName="y" from="0" to="64" dur="1s" repeatCount="indefinite" />
               <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
             </pattern>
             {/* water-flow-up: texture scrolls up (water flows upward) */}
             <pattern id="water-flow-up" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="y" from="0" to="-64" dur="0.6s" repeatCount="indefinite" />
+              <animate attributeName="y" from="0" to="-64" dur="1s" repeatCount="indefinite" />
               <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
             </pattern>
           </defs>
@@ -934,6 +1005,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         {activePuzzle.grid.map((row, r) =>
           row.map((cell, c) => {
             const isFilled = filledCells.has(`${r},${c}`);
+            const isFrontier = isFlow && frontierCell?.row === r && frontierCell?.col === c;
             return (
               <div key={`${r}-${c}`} className="absolute"
                 style={{ left: 8 + c * cellSize, top: 8 + r * cellSize }}>
@@ -945,10 +1017,12 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
                   isSource={cell.isSource}
                   isDrain={cell.isDrain}
                   isDrainConnected={isDrainConnected}
-                  isFrontier={false}
+                  isFrontier={!!isFrontier}
                   onClick={() => handlersRef.current.onCellTap(r, c)}
                   flowSpeed={isFilled ? getFlowSpeed(r, c) : 'classic'}
                   segFlowDirs={isFilled ? flowDirMap.get(`${r},${c}`) : undefined}
+                  frontierInfo={isFrontier ? { entryDir: frontierCell.entryDir, exitDir: frontierCell.exitDir, flowDir: frontierCell.flowDir } : undefined}
+                  onFrontierFilled={isFrontier ? () => handlersRef.current.flowTick() : undefined}
                 />
               </div>
             );
