@@ -105,11 +105,13 @@ const OPPOSITE_DIR: Record<string, string> = { up: 'down', down: 'up', left: 'ri
 // fillKey forces a re-mount via React key when the frontier moves to a new cell.
 
 function edgePoint(dir: string, half: number, size: number): [number, number] {
+  // Extend 2px past cell edge to overlap neighbors and eliminate border gap
+  const pad = 2;
   switch (dir) {
-    case 'left':  return [0, half];
-    case 'right': return [size, half];
-    case 'up':    return [half, 0];
-    case 'down':  return [half, size];
+    case 'left':  return [-pad, half];
+    case 'right': return [size + pad, half];
+    case 'up':    return [half, -pad];
+    case 'down':  return [half, size + pad];
     default:     return [half, half];
   }
 }
@@ -189,12 +191,14 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
   // Build path segments from connections, each with flow direction for pattern animation
   const conns = getConnections(type as 'straight' | 'bend' | 'tee' | 'cross' | 'dead', rotation);
   const segments: { d: string; dir: string }[] = [];
+  // Extend 2px past cell edge to overlap neighbors and eliminate border gap
+  const pad = 2;
   for (const dir of conns) {
     switch (dir) {
-      case 'up':    segments.push({ d: `M ${half} ${half} L ${half} 0`, dir: 'up' }); break;
-      case 'down':  segments.push({ d: `M ${half} ${half} L ${half} ${size}`, dir: 'down' }); break;
-      case 'left':  segments.push({ d: `M ${half} ${half} L 0 ${half}`, dir: 'left' }); break;
-      case 'right': segments.push({ d: `M ${half} ${half} L ${size} ${half}`, dir: 'right' }); break;
+      case 'up':    segments.push({ d: `M ${half} ${half} L ${half} ${-pad}`, dir: 'up' }); break;
+      case 'down':  segments.push({ d: `M ${half} ${half} L ${half} ${size + pad}`, dir: 'down' }); break;
+      case 'left':  segments.push({ d: `M ${half} ${half} L ${-pad} ${half}`, dir: 'left' }); break;
+      case 'right': segments.push({ d: `M ${half} ${half} L ${size + pad} ${half}`, dir: 'right' }); break;
     }
   }
 
@@ -212,7 +216,7 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
         cursor: 'pointer',
       }}
     >
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ overflow: 'visible' }}>
         {/* Pipe segments (base layer) */}
         {segments.map((seg, i) => (
           <path key={i} d={seg.d} stroke={color} strokeWidth={thickness} strokeLinecap="round" fill="none" />
