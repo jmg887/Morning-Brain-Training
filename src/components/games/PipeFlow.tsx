@@ -717,24 +717,10 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       gridRef.current = JSON.parse(JSON.stringify(rounds[0].puzzle));
     }
     timerRef.current = setInterval(() => handlersRef.current.tick(), 1000);
-    // Flow mode: countdown before activating flow
     if (isFlow) {
-      const countdownInterval = setInterval(() => {
-        if (gameEndedRef.current) { clearInterval(countdownInterval); return; }
-        const cur = stateRef.current;
-        if (cur.phase !== 'playing') return;
-        const next = cur.flowCountdown - 1;
-        if (next <= 0) {
-          clearInterval(countdownInterval);
-          if (!gameEndedRef.current) setState({ flowActive: true, flowCountdown: 0 });
-        } else {
-          setState({ flowCountdown: next });
-        }
-      }, 1000);
       return () => {
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
-        clearInterval(countdownInterval);
         gameEndedRef.current = true;
       };
     }
@@ -743,6 +729,30 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       gameEndedRef.current = true;
     };
   }, []);
+
+  // ─── Flow countdown: reactive to state, works for EVERY round ─────────────
+  // Uses setTimeout chain so each tick re-triggers via state change.
+  // This replaces the old one-shot countdownInterval that died after round 1.
+
+  useEffect(() => {
+    if (!isFlow) return;
+    if (state.phase !== 'playing') return;
+    if (state.flowActive || state.flowPaused || state.flowCountdown <= 0) return;
+
+    const id = setTimeout(() => {
+      if (gameEndedRef.current) return;
+      const cur = stateRef.current;
+      if (cur.phase !== 'playing' || cur.flowActive || cur.flowPaused) return;
+      const next = cur.flowCountdown - 1;
+      if (next <= 0) {
+        setState({ flowActive: true, flowCountdown: 0 });
+      } else {
+        setState({ flowCountdown: next });
+      }
+    }, 1000);
+
+    return () => clearTimeout(id);
+  }, [isFlow, state.phase, state.flowActive, state.flowPaused, state.flowCountdown]);
 
   // ─── Flow interval: start/stop based on flowActive and flowPaused ───────
   // This is the KEY CHANGE: a simple setInterval drives flow advancement.
