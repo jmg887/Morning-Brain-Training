@@ -243,8 +243,8 @@ function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isD
             fillKey={frontierInfo.fillKey}
           />
         )}
-        {/* Center dot */}
-        <circle cx={half} cy={half} r={dotR} fill={color} />
+        {/* Center dot — hidden when liquid is present (liquid overlay covers center) */}
+        {!isFilled && !isFrontier && <circle cx={half} cy={half} r={dotR} fill={color} />}
         {/* Source icon */}
         {isSource && (
           <>
