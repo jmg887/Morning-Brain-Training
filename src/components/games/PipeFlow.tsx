@@ -89,6 +89,10 @@ function createInitialState(isFlow: boolean): PlayState {
   };
 }
 
+// ─── Direction helpers ──────────────────────────────────────────────────────
+
+const OPPOSITE_DIR: Record<string, string> = { up: 'down', down: 'up', left: 'right', right: 'left' };
+
 // ─── Pipe Rendering Component ──────────────────────────────────────────────────
 
 interface PipeCellProps {
@@ -102,9 +106,11 @@ interface PipeCellProps {
   isFrontier: boolean;
   onClick: () => void;
   flowSpeed: 'classic' | 'flow' | 'frontier';
+  /** For each segment direction, the actual flow direction of water through it */
+  segFlowDirs?: Record<string, string>;
 }
 
-function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed }: PipeCellProps) {
+function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed, segFlowDirs }: PipeCellProps) {
   const half = size / 2;
   const thickness = Math.max(size * 0.22, 6);
   const color = isSource ? SOURCE_COLOR : isDrain ? (isDrainConnected ? DRAIN_COLOR : '#CC3333') : isFilled ? PIPE_FILLED : PIPE_COLOR;
@@ -151,17 +157,21 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
         {segments.map((seg, i) => (
           <path key={i} d={seg.d} stroke={color} strokeWidth={thickness} strokeLinecap="round" fill="none" />
         ))}
-        {/* Liquid-filled segments: shared water texture pattern */}
-        {isFilled && segments.map((seg, i) => (
-          <path
-            key={`liq-${i}`}
-            d={seg.d}
-            stroke={`url(#water-${seg.dir})`}
-            strokeWidth={thickness - 2}
-            strokeLinecap="round"
-            fill="none"
-          />
-        ))}
+        {/* Liquid-filled segments: shared water texture pattern, direction-aware */}
+        {isFilled && segments.map((seg, i) => {
+          // Use computed flow direction if available, else fall back to segment direction
+          const flowDir = segFlowDirs?.[seg.dir] ?? seg.dir;
+          return (
+            <path
+              key={`liq-${i}`}
+              d={seg.d}
+              stroke={`url(#water-flow-${flowDir})`}
+              strokeWidth={thickness - 2}
+              strokeLinecap="round"
+              fill="none"
+            />
+          );
+        })}
         {/* Center dot */}
         <circle cx={half} cy={half} r={dotR} fill={color} />
         {/* Center bubble glow when filled (only on junctions) */}
@@ -255,6 +265,32 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   // In flow mode, use flowFilledCells as the "filled" set
   const filledCells = isFlow ? state.flowFilledCells : waterFlow;
   const isDrainConnected = filledCells.has(`${activePuzzle?.drainRow},${activePuzzle?.drainCol}`);
+
+  // Compute per-cell flow directions so water texture scrolls in the correct direction
+  // Maps "row,col" → { segDir → actualFlowDir }
+  // e.g. a segment pointing "up" that water flows INTO (edge→center) actually flows DOWNWARD
+  const flowDirMap = useMemo(() => {
+    const p = gridRef.current;
+    if (!p) return new Map<string, Record<string, string>>();
+    const steps = traceFlowPath(p);
+    const map = new Map<string, Record<string, string>>();
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const cellKey = `${step.row},${step.col}`;
+      // Source enters from "left" (outside), drain exits to "right" (outside)
+      const entryDir: string = step.entryDir ?? 'left';
+      const exitDir: string | null = step.exitDir;
+      const segDirs: Record<string, string> = {};
+      // For each segment of this cell, determine the actual water flow direction:
+      // - Exit segment (center→edge): water flows in the segment's direction
+      // - Entry segment (edge→center): water flows OPPOSITE to the segment's direction
+      //   (water enters FROM that direction, so it flows the other way)
+      if (exitDir) segDirs[exitDir] = exitDir; // outward: flow direction = segment direction
+      if (entryDir) segDirs[entryDir] = OPPOSITE_DIR[entryDir]; // inward: flow is opposite
+      map.set(cellKey, segDirs);
+    }
+    return map;
+  }, [activePuzzle, state.moves, state.flowFilledCells]);
 
   // Determine flow speed for cells
   const getFlowSpeed = useCallback((r: number, c: number): 'classic' | 'flow' | 'frontier' => {
@@ -858,24 +894,29 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         className="relative rounded-2xl p-2"
         style={{ width: actualGridSize + 16, height: actualGridSize + 16, background: GRID_BG }}
       >
-        {/* Shared water texture pattern defs — 4 directions, one animated pattern each */}
+        {/* Shared water texture pattern defs — 4 actual flow directions */}
         <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
           <defs>
-            {(['up', 'down', 'left', 'right'] as const).map(dir => {
-              const attr = dir === 'up' || dir === 'down' ? 'y' : 'x';
-              const to = dir === 'up' || dir === 'left' ? -64 : 64;
-              return (
-                <pattern
-                  key={dir}
-                  id={`water-${dir}`}
-                  patternUnits="userSpaceOnUse"
-                  width="64" height="64"
-                >
-                  <animate attributeName={attr} from="0" to={String(to)} dur="0.6s" repeatCount="indefinite" />
-                  <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
-                </pattern>
-              );
-            })}
+            {/* water-flow-right: texture scrolls right (water flows rightward) */}
+            <pattern id="water-flow-right" patternUnits="userSpaceOnUse" width="64" height="64">
+              <animate attributeName="x" from="0" to="64" dur="0.6s" repeatCount="indefinite" />
+              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
+            </pattern>
+            {/* water-flow-left: texture scrolls left (water flows leftward) */}
+            <pattern id="water-flow-left" patternUnits="userSpaceOnUse" width="64" height="64">
+              <animate attributeName="x" from="0" to="-64" dur="0.6s" repeatCount="indefinite" />
+              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
+            </pattern>
+            {/* water-flow-down: texture scrolls down (water flows downward) */}
+            <pattern id="water-flow-down" patternUnits="userSpaceOnUse" width="64" height="64">
+              <animate attributeName="y" from="0" to="64" dur="0.6s" repeatCount="indefinite" />
+              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
+            </pattern>
+            {/* water-flow-up: texture scrolls up (water flows upward) */}
+            <pattern id="water-flow-up" patternUnits="userSpaceOnUse" width="64" height="64">
+              <animate attributeName="y" from="0" to="-64" dur="0.6s" repeatCount="indefinite" />
+              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
+            </pattern>
           </defs>
         </svg>
 
@@ -907,6 +948,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
                   isFrontier={false}
                   onClick={() => handlersRef.current.onCellTap(r, c)}
                   flowSpeed={isFilled ? getFlowSpeed(r, c) : 'classic'}
+                  segFlowDirs={isFilled ? flowDirMap.get(`${r},${c}`) : undefined}
                 />
               </div>
             );
