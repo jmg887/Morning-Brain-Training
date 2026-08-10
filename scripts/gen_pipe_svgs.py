@@ -82,12 +82,12 @@ def bend_tr(inset=0):
     
     L-shape CW: (a,0)->(b,0)->turn->(S,a)->(S,b)->turn->(a,b)->(a,0)
     Convex corner at (b,a): arc CW from (b, a-r) to (b-r, a)
-    Reflex corner at (a,b): arc CCW from (a+r, b) to (a, b-r)
+    Reflex corner at (a,b): arc CW from (a+r, b) to (a, b-r)
     """
     a, b, w = _c(inset)
     r = max(R - inset, 2)
     return (f"M{a},0H{b}V{a - r}A{r},{r} 0 0,1 {b - r},{a}"
-            f"H{S}V{b}H{a + r}A{r},{r} 0 0,0 {a},{b - r}V0Z")
+            f"H{S}V{b}H{a + r}A{r},{r} 0 0,1 {a},{b - r}V0Z")
 
 
 def _svg(wall_d, int_d, color):
