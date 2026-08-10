@@ -330,32 +330,50 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     const steps = traceFlowPath(gridRef.current);
     console.log('[flow] flowTick:', flowStepRef.current, '/', steps.length, 'steps');
 
-    // Source can't receive water
-    if (steps.length === 0 || (steps[0].isDeadEnd && flowStepRef.current === 0)) {
-      const newLives = s.lives - 1;
-      if (newLives <= 0) {
-        setState({
-          lives: 0, phase: 'round_transition', feedback: 'dead_end',
-          lastRoundMoves: s.moves, lastRoundTime: 0, lastRoundSolved: false, combo: 0,
-        });
-        if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
-        setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
-        return;
-      }
-      setState({
-        lives: newLives, flowPaused: true,
-        flowDeadEndKey: s.flowDeadEndKey + 1, feedback: 'dead_end',
-      });
-      setTimeout(() => {
-        if (gameEndedRef.current) return;
-        const cur = stateRef.current;
-        if (cur.phase === 'playing') setState({ flowPaused: false, feedback: null });
-      }, FLOW_PAUSE_MS);
-      return;
-    }
+    // No path at all (shouldn't happen with valid puzzles)
+    if (steps.length === 0) return;
 
     const nextStep = flowStepRef.current + 1;
-    if (nextStep > steps.length) return;
+
+    // We've gone past the end of the traceable path — dead end
+    if (nextStep > steps.length) {
+      const lastStep = steps[steps.length - 1];
+      if (lastStep?.isDeadEnd && !lastStep?.reachedDrain) {
+        const newLives = s.lives - 1;
+        if (newLives <= 0) {
+          setState({
+            lives: 0, phase: 'round_transition', feedback: 'dead_end',
+            lastRoundMoves: s.moves, lastRoundTime: 0, lastRoundSolved: false, combo: 0,
+          });
+          if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
+          setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
+          return;
+        }
+        setState({
+          lives: newLives, flowPaused: true,
+          flowDeadEndKey: s.flowDeadEndKey + 1, feedback: 'dead_end',
+        });
+        setTimeout(() => {
+          if (gameEndedRef.current) return;
+          const cur = stateRef.current;
+          if (cur.phase === 'playing') {
+            const freshSteps = traceFlowPath(gridRef.current!);
+            // Only unpause if the path has extended past the dead end
+            if (freshSteps.length > flowStepRef.current) {
+              const newFilledAfterFix = new Set<string>();
+              for (let i = 0; i < flowStepRef.current && i < freshSteps.length; i++) {
+                newFilledAfterFix.add(`${freshSteps[i].row},${freshSteps[i].col}`);
+              }
+              setState({ flowPaused: false, feedback: null, flowFilledCells: newFilledAfterFix });
+            } else {
+              // Still stuck — keep paused
+              setState({ flowDeadEndKey: cur.flowDeadEndKey + 1, feedback: 'dead_end' });
+            }
+          }
+        }, FLOW_PAUSE_MS);
+      }
+      return;
+    }
 
     // Add the next cell to filled set
     const newFilled = new Set(s.flowFilledCells);
@@ -365,7 +383,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     flowStepRef.current = nextStep;
     const flowStepUpdate = { flowFilledCells: newFilled, flowStep: nextStep };
 
-    // Check the step we just reached
+    // Check the step we just reached for drain victory
     const reachedStep = steps[Math.min(nextStep - 1, steps.length - 1)];
 
     if (reachedStep?.reachedDrain) {
@@ -397,44 +415,8 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       return;
     }
 
-    if (reachedStep?.isDeadEnd) {
-      const newLives = s.lives - 1;
-      if (newLives <= 0) {
-        setState({
-          flowFilledCells: newFilled, lives: 0,
-          phase: 'round_transition', feedback: 'dead_end',
-          lastRoundMoves: s.moves, lastRoundTime: 0, lastRoundSolved: false, combo: 0,
-        });
-        if (flowIntervalRef.current) { clearInterval(flowIntervalRef.current); flowIntervalRef.current = null; }
-        setTimeout(() => { if (!gameEndedRef.current) handlersRef.current.advanceRound(); }, 2500);
-        return;
-      }
-      setState({
-        ...flowStepUpdate,
-        lives: newLives, flowPaused: true,
-        flowDeadEndKey: s.flowDeadEndKey + 1, feedback: 'dead_end',
-      });
-      setTimeout(() => {
-        if (gameEndedRef.current) return;
-        const cur = stateRef.current;
-        if (cur.phase === 'playing') {
-          const freshSteps = traceFlowPath(gridRef.current!);
-          const stepIdx = Math.min(flowStepRef.current, freshSteps.length - 1);
-          if (stepIdx >= 0 && stepIdx < freshSteps.length && freshSteps[stepIdx].isDeadEnd) {
-            setState({ flowPaused: true, flowDeadEndKey: cur.flowDeadEndKey + 1, feedback: 'dead_end' });
-            return;
-          }
-          const newFilledAfterFix = new Set<string>();
-          for (let i = 0; i < flowStepRef.current && i < freshSteps.length; i++) {
-            newFilledAfterFix.add(`${freshSteps[i].row},${freshSteps[i].col}`);
-          }
-          setState({ flowPaused: false, feedback: null, flowFilledCells: newFilledAfterFix });
-        }
-      }, FLOW_PAUSE_MS);
-      return;
-    }
-
     // Normal advance — just update filled cells and step
+    // (Dead end detection happens at the top of flowTick when nextStep > steps.length)
     setState(flowStepUpdate);
   }, [setState, endGame, isFlow]);
 
@@ -475,6 +457,10 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
 
     const cell = p.grid[row][col];
     if (!cell) return;
+
+    // Don't allow rotating source or drain — their rotations are fixed
+    // to ensure the 'left' (source) and 'right' (drain) boundary connections
+    if (cell.isSource || cell.isDrain) return;
 
     cell.rotation = (cell.rotation + 1) % 4;
     const newMoves = s.moves + 1;
@@ -529,10 +515,12 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     // Flow mode: if paused (dead end) and player fixes the path, unpause immediately
     if (isFlow && s.flowPaused) {
       const steps = traceFlowPath(p);
-      // Check if the dead-end step is no longer a dead end on the new path
-      const stepIdx = Math.min(flowStepRef.current, steps.length - 1);
-      if (stepIdx >= 0 && stepIdx < steps.length && !steps[stepIdx].isDeadEnd) {
-        // The blocking step is now clear — unpause so flow can continue
+      // If the path is now longer than where we're stuck, or the dead-end step is cleared, unpause
+      const lastFilledStep = Math.min(flowStepRef.current, steps.length - 1);
+      const pathExtended = steps.length > flowStepRef.current;
+      const deadEndCleared = lastFilledStep >= 0 && lastFilledStep < steps.length && !steps[lastFilledStep].isDeadEnd;
+      if (pathExtended || deadEndCleared) {
+        // The path is now clear — update filled cells and unpause
         const newFilledAfterFix = new Set<string>();
         for (let i = 0; i < flowStepRef.current && i < steps.length; i++) {
           newFilledAfterFix.add(`${steps[i].row},${steps[i].col}`);
