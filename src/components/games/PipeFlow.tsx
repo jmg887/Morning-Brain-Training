@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameStore, type PipeMode } from '@/store/useGameStore';
-import { generatePipeSession, computeWaterFlow, isPuzzleSolved, getConnections, traceFlowPath, type PipeRound, type PipePuzzle, type Direction } from '@/lib/pipeGenerator';
+import { generatePipeSession, computeWaterFlow, isPuzzleSolved, traceFlowPath, type PipeRound, type PipePuzzle } from '@/lib/pipeGenerator';
 import { dateToSeed, getTodaySeedStr } from '@/lib/seededRandom';
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
@@ -15,7 +15,6 @@ const GRID_BG = '#E8E8E8';
 const SOURCE_COLOR = '#58CC02';
 const DRAIN_COLOR = '#FF3B30';
 const GLOBAL_TIME = 420; // 7 minutes total session
-const FLOW_FILL_DURATION = 1.8; // seconds to fill one cell (the payoff!)
 const FLOW_TICK_MS = 1900; // ms between flow advances (timer-driven, not callback-driven)
 const FLOW_PAUSE_MS = 2500; // pause after losing a life
 const FLOW_PREP_SECONDS = 5; // seconds to prepare before flow starts
@@ -93,70 +92,35 @@ function createInitialState(isFlow: boolean): PlayState {
   };
 }
 
-// ─── Direction helpers ──────────────────────────────────────────────────────
+// ─── Pipe Asset Mapping ────────────────────────────────────────────────
 
 const OPPOSITE_DIR: Record<string, string> = { up: 'down', down: 'up', left: 'right', right: 'left' };
 
-// ─── Frontier Water (progressive cell fill) ────────────────────────────────
-// Renders water gradually filling a cell from entry edge → center → exit edge.
-// PURELY VISUAL — flow advancement is driven by a setInterval timer in the parent.
-// fillKey forces a re-mount via React key when the frontier moves to a new cell.
-
-function edgePoint(dir: string, half: number, size: number): [number, number] {
-  switch (dir) {
-    case 'left':  return [0, half];
-    case 'right': return [size, half];
-    case 'up':    return [half, 0];
-    case 'down':  return [half, size];
-    default:     return [half, half];
+/** Map (type, rotation) to sprite asset name. */
+function getPipeSpriteName(type: string, rotation: number): string {
+  switch (type) {
+    case 'straight':
+      return (rotation % 2 === 0) ? 'straight-h' : 'straight-v';
+    case 'bend':
+      return ['bend-TR', 'bend-RB', 'bend-BL', 'bend-LT'][rotation % 4];
+    case 'tee':
+      return ['T-up', 'T-right', 'T-down', 'T-left'][rotation % 4];
+    case 'cross':
+      return 'cross-empty';
+    case 'dead':
+      return ['stub-right', 'stub-down', 'stub-left', 'stub-up'][rotation % 4];
+    default:
+      return 'cross-empty';
   }
 }
 
-function FrontierWater({ entryDir, exitDir, size, thickness, flowDir, fillKey }: {
-  entryDir: string;
-  exitDir: string;
-  size: number;
-  thickness: number;
-  flowDir: string;
-  fillKey: number;
-}) {
-  const [fillStarted, setFillStarted] = useState(false);
-  const half = size / 2;
-
-  const [ex, ey] = edgePoint(entryDir, half, size);
-  const [ox, oy] = edgePoint(exitDir, half, size);
-  const d = `M ${ex} ${ey} L ${half} ${half} L ${ox} ${oy}`;
-  const pathLength = size;
-
-  // Double-rAF: paint initial hidden state, then trigger CSS transition.
-  // fillKey changes when frontier moves to a new cell, which triggers re-mount
-  // via React key, so this effect always runs fresh.
-  useEffect(() => {
-    const r1 = requestAnimationFrame(() => {
-      const r2 = requestAnimationFrame(() => {
-        setFillStarted(true);
-      });
-    });
-    return () => cancelAnimationFrame(r1);
-  }, [fillKey]);
-
-  return (
-    <path
-      d={d}
-      stroke={`url(#water-flow-${flowDir})`}
-      strokeWidth={thickness - 2}
-      strokeLinecap="round"
-      fill="none"
-      style={{
-        strokeDasharray: pathLength,
-        strokeDashoffset: fillStarted ? 0 : pathLength,
-        transition: fillStarted ? `stroke-dashoffset ${FLOW_FILL_DURATION}s linear` : 'none',
-      }}
-    />
-  );
+/** Get the pipe asset URL for a given type, rotation, and fill state. */
+function getPipeAssetUrl(type: string, rotation: number, filled: boolean): string {
+  const base = getPipeSpriteName(type, rotation);
+  return filled ? `/pipes/${base}-filled.png` : `/pipes/${base}.png`;
 }
 
-// ─── Pipe Rendering Component ──────────────────────────────────────────────────
+// ─── Pipe Rendering Component (PNG-based) ──────────────────────────────
 
 interface PipeCellProps {
   cellKey: string;
@@ -170,105 +134,44 @@ interface PipeCellProps {
   isFrontier: boolean;
   onClick: () => void;
   flowSpeed: 'classic' | 'flow' | 'frontier';
-  /** For each segment direction, the actual flow direction of water through it */
   segFlowDirs?: Record<string, string>;
-  /** Progressive fill info for the frontier cell */
   frontierInfo?: { entryDir: string; exitDir: string; flowDir: string; fillKey: number };
 }
 
-function PipeCellRender({ cellKey, type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, isFrontier, onClick, flowSpeed, segFlowDirs, frontierInfo }: PipeCellProps) {
-  const half = size / 2;
-  const thickness = Math.max(size * 0.22, 6);
-  const outlineW = Math.max(thickness * 0.18, 1.5);
-  const jointR = thickness * 0.55;
+function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, onClick }: PipeCellProps) {
   const bgColor = isSource ? '#E8FFE0' : isDrain ? '#FFE8E5' : '#F5F5F5';
-
-  // Build path segments from connections, each with flow direction for pattern animation
-  const conns = getConnections(type as 'straight' | 'bend' | 'tee' | 'cross' | 'dead', rotation);
-  const segments: { d: string; dir: string }[] = [];
-  for (const dir of conns) {
-    switch (dir) {
-      case 'up':    segments.push({ d: `M ${half} ${half} L ${half} 0`, dir: 'up' }); break;
-      case 'down':  segments.push({ d: `M ${half} ${half} L ${half} ${size}`, dir: 'down' }); break;
-      case 'left':  segments.push({ d: `M ${half} ${half} L 0 ${half}`, dir: 'left' }); break;
-      case 'right': segments.push({ d: `M ${half} ${half} L ${size} ${half}`, dir: 'right' }); break;
-    }
-  }
-
-  // Pipe gradient selection based on state
-  const pipeGrad = (segDir: string) => {
-    const isH = segDir === 'left' || segDir === 'right';
-    if (isFilled || isFrontier) return isH ? 'url(#pipe-filled-grad-h)' : 'url(#pipe-filled-grad-v)';
-    return isH ? 'url(#pipe-grad-h)' : 'url(#pipe-grad-v)';
-  };
-  const jointGrad = isSource ? 'url(#pipe-joint-source)'
-    : isDrain ? 'url(#pipe-joint-drain)'
-    : (isFilled || isFrontier) ? 'url(#pipe-joint-filled)'
-    : 'url(#pipe-joint)';
+  const showFilled = isFilled;
+  const pipeSrc = getPipeAssetUrl(type, rotation, showFilled);
 
   return (
     <button
       onClick={onClick}
-      className={`absolute rounded-lg transition-all duration-150 active:scale-95`}
+      className="absolute rounded-lg transition-all duration-150 active:scale-95"
       style={{
         width: size, height: size, left: 0, top: 0,
         background: bgColor,
         border: `2px solid ${isSource ? SOURCE_COLOR + '40' : isDrain ? DRAIN_COLOR + '40' : GRID_BG}`,
         cursor: 'pointer',
+        overflow: 'hidden',
+        padding: 0,
       }}
     >
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        {/* Pipe segments: black outline + gradient body */}
-        {!isSource && !isDrain && segments.map((seg, i) => (
-          <g key={i}>
-            <path d={seg.d} stroke="#1a1a1a" strokeWidth={thickness + outlineW * 2} strokeLinecap="round" fill="none" />
-            <path d={seg.d} stroke={pipeGrad(seg.dir)} strokeWidth={thickness} strokeLinecap="round" fill="none" />
-          </g>
-        ))}
-        {/* Source/Drain pipe segments: colored solid */}
-        {(isSource || isDrain) && segments.map((seg, i) => (
-          <g key={i}>
-            <path d={seg.d} stroke="#1a1a1a" strokeWidth={thickness + outlineW * 2} strokeLinecap="round" fill="none" />
-            <path d={seg.d} stroke={isSource ? '#58CC02' : '#FF3B30'} strokeWidth={thickness} strokeLinecap="round" fill="none" />
-          </g>
-        ))}
-        {/* Liquid texture overlay on filled pipes */}
-        {isFilled && segments.map((seg, i) => {
-          const flowDir = segFlowDirs?.[seg.dir] ?? seg.dir;
-          return (
-            <path
-              key={`liq-${i}`}
-              d={seg.d}
-              stroke={`url(#water-flow-${flowDir})`}
-              strokeWidth={thickness - 4}
-              strokeLinecap="round"
-              fill="none"
-            />
-          );
-        })}
-        {/* Frontier: progressive water fill */}
-        {isFrontier && frontierInfo && (
-          <FrontierWater
-            key={`fw-${cellKey}-${frontierInfo.fillKey}`}
-            entryDir={frontierInfo.entryDir}
-            exitDir={frontierInfo.exitDir}
-            size={size}
-            thickness={thickness}
-            flowDir={frontierInfo.flowDir}
-            fillKey={frontierInfo.fillKey}
-          />
-        )}
-        {/* Center sphere joint */}
-        <circle cx={half} cy={half} r={jointR} fill={jointGrad} stroke="#1a1a1a" strokeWidth={outlineW} />
-        {/* Source + icon */}
-        {isSource && (
-          <path d={`M ${half - 4} ${half} L ${half + 4} ${half} M ${half} ${half - 4} L ${half} ${half + 4}`} stroke="#fff" strokeWidth={2.5} strokeLinecap="round" />
-        )}
-        {/* Drain x icon */}
-        {isDrain && (
-          <path d={`M ${half - 4} ${half - 4} L ${half + 4} ${half + 4} M ${half + 4} ${half - 4} L ${half - 4} ${half + 4}`} stroke="#fff" strokeWidth={2.5} strokeLinecap="round" />
-        )}
-      </svg>
+      <img
+        src={pipeSrc}
+        alt=""
+        draggable={false}
+        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }}
+      />
+      {isSource && (
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 16, height: 16, borderRadius: '50%', background: SOURCE_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}>
+          <svg width={10} height={10} viewBox="0 0 10 10"><line x1={5} y1={2} x2={5} y2={8} stroke="#fff" strokeWidth={2} strokeLinecap="round" /><line x1={2} y1={5} x2={8} y2={5} stroke="#fff" strokeWidth={2} strokeLinecap="round" /></svg>
+        </div>
+      )}
+      {isDrain && (
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 16, height: 16, borderRadius: '50%', background: isDrainConnected ? SOURCE_COLOR : DRAIN_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}>
+          <svg width={10} height={10} viewBox="0 0 10 10"><line x1={2} y1={2} x2={8} y2={8} stroke="#fff" strokeWidth={2} strokeLinecap="round" /><line x1={8} y1={2} x2={2} y2={8} stroke="#fff" strokeWidth={2} strokeLinecap="round" /></svg>
+        </div>
+      )}
     </button>
   );
 }
@@ -335,59 +238,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
   // In flow mode, use flowFilledCells as the "filled" set
   const filledCells = isFlow ? state.flowFilledCells : waterFlow;
   const isDrainConnected = filledCells.has(`${activePuzzle?.drainRow},${activePuzzle?.drainCol}`);
-
-  // Compute per-cell flow directions so water texture scrolls in the correct direction
-  // Maps "row,col" → { segDir → actualFlowDir }
-  // e.g. a segment pointing "up" that water flows INTO (edge→center) actually flows DOWNWARD
-  const flowDirMap = useMemo(() => {
-    const p = gridRef.current;
-    if (!p) return new Map<string, Record<string, string>>();
-    const steps = traceFlowPath(p);
-    const map = new Map<string, Record<string, string>>();
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
-      const cellKey = `${step.row},${step.col}`;
-      // Source enters from "left" (outside), drain exits to "right" (outside)
-      const entryDir: string = step.entryDir ?? 'left';
-      const exitDir: string | null = step.exitDir;
-      const segDirs: Record<string, string> = {};
-      // For each segment of this cell, determine the actual water flow direction:
-      // - Exit segment (center→edge): water flows in the segment's direction
-      // - Entry segment (edge→center): water flows OPPOSITE to the segment's direction
-      //   (water enters FROM that direction, so it flows the other way)
-      if (exitDir) segDirs[exitDir] = exitDir; // outward: flow direction = segment direction
-      if (entryDir) segDirs[entryDir] = OPPOSITE_DIR[entryDir]; // inward: flow is opposite
-      map.set(cellKey, segDirs);
-    }
-    return map;
-  }, [activePuzzle, state.moves, state.flowFilledCells]);
-
-  // Determine flow speed for cells
-  const getFlowSpeed = useCallback((r: number, c: number): 'classic' | 'flow' | 'frontier' => {
-    if (!isFlow) return 'classic';
-    return 'flow';
-  }, [isFlow]);
-
-  // Compute the current frontier cell (the cell being progressively filled)
-  const frontierCell = useMemo(() => {
-    if (!isFlow || !gridRef.current || state.flowPaused || !state.flowActive) return null;
-    const steps = traceFlowPath(gridRef.current);
-    const idx = state.flowStep;
-    if (idx < 0 || idx >= steps.length) return null;
-    const step = steps[idx];
-    if (step.reachedDrain || step.isDeadEnd) return null;
-    const entryDir: string = step.entryDir ?? 'left';
-    const exitDir: string | null = step.exitDir;
-    if (!exitDir) return null;
-    return {
-      row: step.row,
-      col: step.col,
-      entryDir,
-      exitDir,
-      flowDir: exitDir,
-      fillKey: state.flowStep, // changes each step → forces FrontierWater re-mount
-    };
-  }, [isFlow, state.flowPaused, state.flowActive, state.flowStep, state.flowFilledCells, state.moves]);
 
   // ─── End Game ──────────────────────────────────────────────────────────────
 
@@ -478,6 +328,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     if (!gridRef.current) return;
 
     const steps = traceFlowPath(gridRef.current);
+    console.log('[flow] flowTick:', flowStepRef.current, '/', steps.length, 'steps');
 
     // Source can't receive water
     if (steps.length === 0 || (steps[0].isDeadEnd && flowStepRef.current === 0)) {
@@ -733,6 +584,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       const cur = stateRef.current;
       if (cur.phase !== 'playing' || cur.flowActive || cur.flowPaused) return;
       const next = cur.flowCountdown - 1;
+      console.log('[flow] countdown:', cur.flowCountdown, '->', next);
       if (next <= 0) {
         setState({ flowActive: true, flowCountdown: 0 });
       } else {
@@ -750,6 +602,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
     if (!isFlow) return;
     if (state.flowActive && !state.flowPaused && state.phase === 'playing') {
       if (flowIntervalRef.current) clearInterval(flowIntervalRef.current);
+      console.log('[flow] STARTING flow interval');
       flowIntervalRef.current = setInterval(() => {
         handlersRef.current.flowTick();
       }, FLOW_TICK_MS);
@@ -1014,74 +867,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         className="relative rounded-2xl p-2"
         style={{ width: actualGridSize + 16, height: actualGridSize + 16, background: GRID_BG }}
       >
-        {/* Shared gradient & pattern defs */}
-        <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
-          <defs>
-            {/* 3D Pipe Gradients */}
-            <linearGradient id="pipe-grad-h" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#8a8a8a" />
-              <stop offset="35%" stopColor="#666" />
-              <stop offset="70%" stopColor="#4a4a4a" />
-              <stop offset="100%" stopColor="#2d2d2d" />
-            </linearGradient>
-            <linearGradient id="pipe-grad-v" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor="#8a8a8a" />
-              <stop offset="35%" stopColor="#666" />
-              <stop offset="70%" stopColor="#4a4a4a" />
-              <stop offset="100%" stopColor="#2d2d2d" />
-            </linearGradient>
-            <linearGradient id="pipe-filled-grad-h" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#4FC3F7" />
-              <stop offset="35%" stopColor="#1CB0F6" />
-              <stop offset="70%" stopColor="#0288D1" />
-              <stop offset="100%" stopColor="#01579B" />
-            </linearGradient>
-            <linearGradient id="pipe-filled-grad-v" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor="#4FC3F7" />
-              <stop offset="35%" stopColor="#1CB0F6" />
-              <stop offset="70%" stopColor="#0288D1" />
-              <stop offset="100%" stopColor="#01579B" />
-            </linearGradient>
-            <radialGradient id="pipe-joint" cx="38%" cy="32%" r="65%">
-              <stop offset="0%" stopColor="#aaa" />
-              <stop offset="45%" stopColor="#777" />
-              <stop offset="100%" stopColor="#333" />
-            </radialGradient>
-            <radialGradient id="pipe-joint-filled" cx="38%" cy="32%" r="65%">
-              <stop offset="0%" stopColor="#81D4FA" />
-              <stop offset="45%" stopColor="#1CB0F6" />
-              <stop offset="100%" stopColor="#01579B" />
-            </radialGradient>
-            <radialGradient id="pipe-joint-source" cx="38%" cy="32%" r="65%">
-              <stop offset="0%" stopColor="#81C784" />
-              <stop offset="45%" stopColor="#58CC02" />
-              <stop offset="100%" stopColor="#2E7D32" />
-            </radialGradient>
-            <radialGradient id="pipe-joint-drain" cx="38%" cy="32%" r="65%">
-              <stop offset="0%" stopColor="#EF9A9A" />
-              <stop offset="45%" stopColor="#FF3B30" />
-              <stop offset="100%" stopColor="#B71C1C" />
-            </radialGradient>
-            {/* Water Flow Patterns */}
-            <pattern id="water-flow-right" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="x" from="0" to="64" dur="1s" repeatCount="indefinite" />
-              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
-            </pattern>
-            <pattern id="water-flow-left" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="x" from="0" to="-64" dur="1s" repeatCount="indefinite" />
-              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
-            </pattern>
-            <pattern id="water-flow-down" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="y" from="0" to="64" dur="1s" repeatCount="indefinite" />
-              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
-            </pattern>
-            <pattern id="water-flow-up" patternUnits="userSpaceOnUse" width="64" height="64">
-              <animate attributeName="y" from="0" to="-64" dur="1s" repeatCount="indefinite" />
-              <image href="/water-texture.png" x="0" y="0" width="64" height="64" />
-            </pattern>
-          </defs>
-        </svg>
-
         {/* Grid lines (subtle) */}
         <div className="absolute inset-2 rounded-xl overflow-hidden" style={{ opacity: 0.3 }}>
           {Array.from({ length: activePuzzle.gridSize + 1 }).map((_, i) => (
@@ -1096,7 +881,6 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
         {activePuzzle.grid.map((row, r) =>
           row.map((cell, c) => {
             const isFilled = filledCells.has(`${r},${c}`);
-            const isFrontier = isFlow && frontierCell?.row === r && frontierCell?.col === c;
             return (
               <div key={`${r}-${c}`} className="absolute"
                 style={{ left: 8 + c * cellSize, top: 8 + r * cellSize }}>
@@ -1109,11 +893,9 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
                   isSource={cell.isSource}
                   isDrain={cell.isDrain}
                   isDrainConnected={isDrainConnected}
-                  isFrontier={!!isFrontier}
+                  isFrontier={false}
                   onClick={() => handlersRef.current.onCellTap(r, c)}
-                  flowSpeed={isFilled ? getFlowSpeed(r, c) : 'classic'}
-                  segFlowDirs={isFilled ? flowDirMap.get(`${r},${c}`) : undefined}
-                  frontierInfo={isFrontier ? { entryDir: frontierCell.entryDir, exitDir: frontierCell.exitDir, flowDir: frontierCell.flowDir, fillKey: frontierCell.fillKey } : undefined}
+                  flowSpeed={'classic'}
                 />
               </div>
             );
@@ -1152,41 +934,8 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
       <style jsx>{`
         @keyframes float-up { 0% { opacity: 1; transform: translateY(0) translateX(-50%); } 100% { opacity: 0; transform: translateY(-60px) translateX(-50%); } }
         @keyframes slide-up { 0% { opacity: 0; transform: translateY(30px); } 100% { opacity: 1; transform: translateY(0); } }
-        @keyframes flow-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }
-
-        /* ── Water: pulsing cell glow ── */
-        @keyframes glow-classic {
-          0%, 100% { box-shadow: 0 0 8px rgba(28,176,246,0.3), inset 0 0 6px rgba(28,176,246,0.15); }
-          50% { box-shadow: 0 0 14px rgba(28,176,246,0.5), inset 0 0 10px rgba(28,176,246,0.25); }
-        }
-        @keyframes glow-flow {
-          0%, 100% { box-shadow: 0 0 10px rgba(28,176,246,0.35), inset 0 0 8px rgba(28,176,246,0.2); }
-          50% { box-shadow: 0 0 18px rgba(28,176,246,0.6), inset 0 0 12px rgba(28,176,246,0.3); }
-        }
-        @keyframes glow-frontier {
-          0%, 100% { box-shadow: 0 0 12px rgba(28,176,246,0.4), inset 0 0 8px rgba(28,176,246,0.25); border-color: rgba(28,176,246,0.4); }
-          50% { box-shadow: 0 0 22px rgba(28,176,246,0.7), inset 0 0 14px rgba(28,176,246,0.35); border-color: rgba(28,176,246,0.6); }
-        }
-        .water-glow-classic {
-          animation: glow-classic 1.5s ease-in-out infinite;
-        }
-        .water-glow-flow {
-          animation: glow-flow 1s ease-in-out infinite;
-        }
-        .water-glow-frontier {
-          animation: glow-frontier 1s ease-in-out infinite;
-        }
-
-        /* ── Water: center bubble ── */
-        @keyframes bubble-breathe {
-          0%, 100% { opacity: 0.6; transform: scale(1); }
-          50% { opacity: 1; transform: scale(1.15); }
-        }
-        .water-bubble {
-          animation: bubble-breathe 2s ease-in-out infinite;
-          transform-origin: center;
-          transform-box: fill-box;
-        }
+        @keyframes combo-pulse { 0% { transform: scale(0.8); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        @keyframes phase-flash { 0% { opacity: 0; transform: scale(0.95); } 50% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(0.95); } }
       `}</style>
     </div>
   );

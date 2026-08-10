@@ -1,0 +1,154 @@
+{
+  "straight-h": [
+    136,
+    144
+  ],
+  "straight-v": [
+    136,
+    144
+  ],
+  "bend-TR": [
+    136,
+    144
+  ],
+  "bend-RB": [
+    136,
+    144
+  ],
+  "bend-BL": [
+    136,
+    144
+  ],
+  "bend-LT": [
+    136,
+    144
+  ],
+  "T-up": [
+    136,
+    144
+  ],
+  "T-right": [
+    136,
+    144
+  ],
+  "T-down": [
+    136,
+    144
+  ],
+  "T-left": [
+    136,
+    144
+  ],
+  "cross-empty": [
+    136,
+    144
+  ],
+  "stub-up": [
+    136,
+    144
+  ],
+  "stub-right": [
+    136,
+    144
+  ],
+  "stub-down": [
+    136,
+    144
+  ],
+  "stub-left": [
+    90,
+    144
+  ],
+  "straight-h-filled": [
+    136,
+    144
+  ],
+  "straight-v-filled": [
+    136,
+    144
+  ],
+  "bend-TR-filled": [
+    136,
+    144
+  ],
+  "bend-RB-filled": [
+    136,
+    144
+  ],
+  "bend-BL-filled": [
+    136,
+    144
+  ],
+  "bend-LT-filled": [
+    136,
+    144
+  ],
+  "T-up-filled": [
+    136,
+    144
+  ],
+  "T-right-filled": [
+    136,
+    144
+  ],
+  "T-down-filled": [
+    136,
+    144
+  ],
+  "T-left-filled": [
+    136,
+    144
+  ],
+  "cross-filled": [
+    136,
+    144
+  ],
+  "stub-up-filled": [
+    136,
+    144
+  ],
+  "stub-right-filled": [
+    136,
+    144
+  ],
+  "stub-down-filled": [
+    136,
+    144
+  ],
+  "stub-left-filled": [
+    90,
+    144
+  ],
+  "source-up": [
+    136,
+    144
+  ],
+  "source-right": [
+    136,
+    144
+  ],
+  "source-down": [
+    136,
+    144
+  ],
+  "source-left": [
+    136,
+    144
+  ],
+  "drain-up": [
+    136,
+    144
+  ],
+  "drain-right": [
+    136,
+    144
+  ],
+  "drain-down": [
+    136,
+    144
+  ],
+  "drain-left": [
+    136,
+    144
+  ]
+}
