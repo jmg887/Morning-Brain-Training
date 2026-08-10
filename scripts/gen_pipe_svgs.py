@@ -1,142 +1,146 @@
 #!/usr/bin/env python3
-"""
-Generate individual 144x144 SVG pipe tiles from the Gemini sprite sheet design.
-Each pipe uses overlapping rectangles for wall + interior layers.
-"""
+"""Generate 144x144 SVG pipe tiles with smooth rounded bend corners."""
 import os
 
 OUT_DIR = "/home/z/my-project/public/pipes-svg"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-S = 144  # viewbox size
-H = S // 2  # 72
-
-# Channel proportions (matching sprite sheet: 40% width, ~6.5% wall)
-CH_W = S * 0.40          # 57.6  channel full width
-CH_HALF = CH_W / 2       # 28.8
-WALL_INSET = S * 0.065   # 9.36  inset for interior from wall edge
-
-# Precompute coordinates
-ws = H - CH_HALF          # wall start  43.2
-we = H + CH_HALF          # wall end  100.8
+S = 144.0
+H = S / 2  # 72
+CH_W = S * 0.40
+CH_HALF = CH_W / 2
+WALL_T = S * 0.065
+ws = H - CH_HALF  # 43.2
+we = H + CH_HALF  # 100.8
+R = CH_HALF * 0.75  # corner radius ~21.6
 
 
-def arm_wall(dir: str) -> str:
-    """Wall rectangle for one arm direction."""
-    if dir == "up":
-        return f"M{ws},0h{CH_W}v{we}h-{CH_W}z"
-    elif dir == "down":
-        return f"M{ws},{ws}h{CH_W}v{we}h-{CH_W}z"
-    elif dir == "left":
-        return f"M0,{ws}h{we}v{CH_W}h-{we}z"
-    elif dir == "right":
-        return f"M{ws},{ws}h{we}v{CH_W}h-{we}z"
+def _c(inset=0):
+    a = ws + inset
+    b = we - inset
+    return a, b, b - a
 
 
-def arm_interior(dir: str) -> str:
-    """Interior rectangle for one arm direction."""
-    ists = ws + WALL_INSET   # 52.56
-    iend = we - WALL_INSET   # 91.44
-    iw = iend - ists         # 38.88
-    if dir == "up":
-        return f"M{ists},0h{iw}v{iend}h-{iw}z"
-    elif dir == "down":
-        return f"M{ists},{ists}h{iw}v{iend}h-{iw}z"
-    elif dir == "left":
-        return f"M0,{ists}h{iend}v{iw}h-{iend}z"
-    elif dir == "right":
-        return f"M{ists},{ists}h{iend}v{iw}h-{iend}z"
+def straight_h(inset=0):
+    a, b, w = _c(inset)
+    return f"M0,{a}h{S}v{w}h-{S}z"
 
 
-def make_svg(wall_arms: list[str], interior_color: str) -> str:
-    """Generate a clean SVG with just wall + interior paths (no bg, no markers).
-       The component handles background color and source/drain markers dynamically."""
-    wall_d = " ".join(arm_wall(d) for d in wall_arms)
-    int_d = " ".join(arm_interior(d) for d in wall_arms)
-
-    svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {S} {S}">'
-    svg += f'<path d="{wall_d}" fill="#777"/>'
-    svg += f'<path d="{int_d}" fill="{interior_color}"/>'
-    svg += '</svg>'
-    return svg
+def straight_v(inset=0):
+    a, b, w = _c(inset)
+    return f"M{a},0v{S}h{w}v-{S}z"
 
 
-# ─── Pipe definitions: (filename, wall_arms) ───────────────────────────────
-pipes = [
-    # Straights
-    ("straight-h", ["left", "right"]),
-    ("straight-v", ["up", "down"]),
-    # Bends
-    ("bend-TR", ["up", "right"]),
-    ("bend-RB", ["right", "down"]),
-    ("bend-BL", ["down", "left"]),
-    ("bend-LT", ["left", "up"]),
-    # Tees
-    ("T-down", ["left", "right", "down"]),
-    ("T-left", ["up", "down", "left"]),
-    ("T-up", ["left", "right", "up"]),
-    ("T-right", ["up", "down", "right"]),
-    # Cross
-    ("cross-empty", ["up", "down", "left", "right"]),
-    # Stubs (dead ends)
-    ("stub-right", ["right"]),
-    ("stub-down", ["down"]),
-    ("stub-left", ["left"]),
-    ("stub-up", ["up"]),
-]
+def cross(inset=0):
+    a, b, w = _c(inset)
+    return f"M{a},0v{S}h{w}v-{S}z M0,{a}h{S}v{w}h-{S}z"
 
-# ─── Generate empty + filled for standard pipes ────────────────────────────
+
+def arm_rect(d, inset=0):
+    a, b, w = _c(inset)
+    if d == 'left':   return f"M0,{a}h{b}v{w}h-{b}z"
+    if d == 'right':  return f"M{a},{a}h{S - a}v{w}h-{S - a}z"
+    if d == 'up':    return f"M{a},0v{b}h{w}v-{b}z"
+    if d == 'down':  return f"M{a},{a}v{S - a}h{w}v-{S - a}z"
+
+
+def tee(orientation, inset=0):
+    arms_map = {
+        'down':  ['left', 'right', 'down'],
+        'left':  ['up', 'down', 'left'],
+        'up':    ['left', 'right', 'up'],
+        'right': ['up', 'down', 'right'],
+    }
+    return ' '.join(arm_rect(d, inset) for d in arms_map[orientation])
+
+
+def stub(d, inset=0):
+    return arm_rect(d, inset)
+
+
+def bend_tr(inset=0):
+    """
+    TR bend: connects UP and RIGHT.
+    L-shape with 6 vertices, CW from top-left:
+    (a,0)→(b,0)→(b,a)→(S,a)→(S,b)→(a,b)→(a,0)
+    
+    Convex corner at (b,a): going DOWN then RIGHT. Round by cutting tip.
+    Reflex corner at (a,b): going LEFT then UP. Round by filling.
+    """
+    a, b, w = _c(inset)
+    r = max(R - inset * 1.2, 2)
+    # Round convex corner (b,a): stop at (b, a-r), arc CW to (b-r, a)
+    # Round reflex corner (a,b): stop at (a+r, b), arc CCW to (a, b-r)
+    return (f"M{a},0H{b}V{a - r}A{r},{r} 0 0,1 {b - r},{a}"
+            f"H{S}V{b}H{a + r}A{r},{r} 0 0,0 {a},{b - r}V0Z")
+
+
+def _svg(wall_d, int_d, color):
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {S} {S}">'
+            f'<path d="{wall_d}" fill="#777"/>'
+            f'<path d="{int_d}" fill="{color}"/>'
+            f'</svg>')
+
+
+def _write(fname, wall_d, int_d):
+    with open(os.path.join(OUT_DIR, f'{fname}.svg'), 'w') as f:
+        f.write(_svg(wall_d, int_d, '#D0D0D0'))
+    with open(os.path.join(OUT_DIR, f'{fname}-filled.svg'), 'w') as f:
+        f.write(_svg(wall_d, int_d, '#1CB0F6'))
+
+
 count = 0
-for name, arms in pipes:
-    # Empty variant
-    svg = make_svg(arms, "#D0D0D0")
-    path = os.path.join(OUT_DIR, f"{name}.svg")
-    with open(path, "w") as f:
-        f.write(svg)
+
+# Straights
+_write('straight-h', straight_h(0), straight_h(WALL_T))
+_write('straight-v', straight_v(0), straight_v(WALL_T))
+count += 4
+
+# Bends: TR directly, others via rotation
+_write('bend-TR', bend_tr(0), bend_tr(WALL_T))
+count += 2
+for name, angle in [('bend-RB', 90), ('bend-BL', 180), ('bend-LT', 270)]:
+    wd = bend_tr(0)
+    id_ = bend_tr(WALL_T)
+    for color, suf in [('#D0D0D0', ''), ('#1CB0F6', '-filled')]:
+        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {S} {S}">'
+               f'<g transform="rotate({angle},{H},{H})">'
+               f'<path d="{wd}" fill="#777"/>'
+               f'<path d="{id_}" fill="{color}"/>'
+               f'</g></svg>')
+        with open(os.path.join(OUT_DIR, f'{name}{suf}.svg'), 'w') as f:
+            f.write(svg)
+        count += 1
+
+# Cross
+with open(os.path.join(OUT_DIR, 'cross-empty.svg'), 'w') as f:
+    f.write(_svg(cross(0), cross(WALL_T), '#D0D0D0'))
+with open(os.path.join(OUT_DIR, 'cross-filled.svg'), 'w') as f:
+    f.write(_svg(cross(0), cross(WALL_T), '#1CB0F6'))
+count += 2
+
+# Tees
+for o in ['down', 'left', 'up', 'right']:
+    _write(f'T-{o}', tee(o, 0), tee(o, WALL_T))
+    count += 2
+
+# Stubs
+for d in ['right', 'down', 'left', 'up']:
+    _write(f'stub-{d}', stub(d, 0), stub(d, WALL_T))
+    count += 2
+
+# Source (filled)
+for d in ['left', 'right', 'up', 'down']:
+    with open(os.path.join(OUT_DIR, f'source-{d}.svg'), 'w') as f:
+        f.write(_svg(stub(d, 0), stub(d, WALL_T), '#1CB0F6'))
     count += 1
 
-    # Filled variant
-    suffix = "-filled"
-    if name == "cross-empty":
-        fname = "cross-filled"
-    else:
-        fname = f"{name}{suffix}"
-    svg = make_svg(arms, "#1CB0F6")
-    path = os.path.join(OUT_DIR, fname)
-    with open(path, "w") as f:
-        f.write(svg)
-    count += 1
-
-# ─── Source tiles (pipe only, always filled blue — marker handled by component) ──
-source_defs = [
-    ("source-left", ["left"]),
-    ("source-right", ["right"]),
-    ("source-up", ["up"]),
-    ("source-down", ["down"]),
-]
-for name, arms in source_defs:
-    svg = make_svg(arms, "#1CB0F6")
-    path = os.path.join(OUT_DIR, f"{name}.svg")
-    with open(path, "w") as f:
-        f.write(svg)
-    count += 1
-
-# ─── Drain tiles (pipe only, empty — marker handled by component) ─────────
-drain_defs = [
-    ("drain-right", ["right"]),
-    ("drain-left", ["left"]),
-    ("drain-up", ["up"]),
-    ("drain-down", ["down"]),
-]
-for name, arms in drain_defs:
-    svg = make_svg(arms, "#D0D0D0")
-    path = os.path.join(OUT_DIR, f"{name}.svg")
-    with open(path, "w") as f:
-        f.write(svg)
+# Drain (empty)
+for d in ['right', 'left', 'up', 'down']:
+    with open(os.path.join(OUT_DIR, f'drain-{d}.svg'), 'w') as f:
+        f.write(_svg(stub(d, 0), stub(d, WALL_T), '#D0D0D0'))
     count += 1
 
 print(f"Generated {count} SVG files in {OUT_DIR}")
-
-# List all files
 for f in sorted(os.listdir(OUT_DIR)):
     print(f"  {f}")
