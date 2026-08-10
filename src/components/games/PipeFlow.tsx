@@ -152,7 +152,7 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
       style={{
         width: size, height: size, left: 0, top: 0,
         background: bgColor,
-        border: `2px solid ${isSource ? SOURCE_COLOR + '40' : isDrain ? DRAIN_COLOR + '40' : GRID_BG}`,
+        border: 'none',
         cursor: 'pointer',
         padding: 0,
       }}
@@ -872,7 +872,7 @@ export default function PipeFlow({ isDaily = false }: PipeFlowProps) {
                   cellKey={`${r},${c}`}
                   type={cell.type}
                   rotation={cell.rotation}
-                  size={cellSize - 2}
+                  size={cellSize}
                   isFilled={isFilled}
                   isSource={cell.isSource}
                   isDrain={cell.isDrain}
