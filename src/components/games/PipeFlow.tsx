@@ -92,7 +92,7 @@ function createInitialState(isFlow: boolean): PlayState {
   };
 }
 
-// ─── Pipe Rendering Component (SVG hollow pipes) ─────────────────────
+// ─── Pipe Rendering Component (SVG assets) ─────────────────────────────
 
 interface PipeCellProps {
   cellKey: string;
@@ -110,48 +110,40 @@ interface PipeCellProps {
   frontierInfo?: { entryDir: string; exitDir: string; flowDir: string; fillKey: number };
 }
 
-const PIPE_WALL_COLOR = '#777';
-const PIPE_INTERIOR_EMPTY = '#D0D0D0';
-const PIPE_INTERIOR_FILLED = '#1CB0F6';
+/** Map pipe type + rotation + fill state to the correct SVG filename.
+ *  Source always connects 'left' (stub-left), drain always connects 'right' (stub-right). */
+function getPipeSvgUrl(type: string, rotation: number, isFilled: boolean, isSource: boolean, isDrain: boolean): string {
+  // Source / drain use special stub SVGs (always filled for source, always empty for drain)
+  if (isSource) return '/pipes-svg/source-left.svg';
+  if (isDrain) return '/pipes-svg/drain-right.svg';
 
-/** Build an SVG path string for a pipe's connected directions.
- *  Uses a single path per layer (wall / interior) so bends and tees
- *  look like continuous corridors, not overlapping rectangles. */
-function buildPipePath(connections: string[], half: number, size: number, inset: number, pad: number): string {
-  const parts: string[] = [];
+  const filled = isFilled ? '-filled' : '';
 
-  for (const dir of connections) {
-    let x = 0, y = 0, w = 0, h = 0;
-    switch (dir) {
-      case 'up':
-        x = half - size * 0.20 + inset; y = -pad;
-        w = size * 0.40 - inset * 2; h = half + size * 0.20 - inset + pad;
-        break;
-      case 'down':
-        x = half - size * 0.20 + inset; y = half - size * 0.20 + inset;
-        w = size * 0.40 - inset * 2; h = half + size * 0.20 - inset + pad;
-        break;
-      case 'left':
-        x = -pad; y = half - size * 0.20 + inset;
-        w = half + size * 0.20 - inset + pad; h = size * 0.40 - inset * 2;
-        break;
-      case 'right':
-        x = half - size * 0.20 + inset; y = half - size * 0.20 + inset;
-        w = half + size * 0.20 - inset + pad; h = size * 0.40 - inset * 2;
-        break;
+  switch (type) {
+    case 'straight':
+      return `/pipes-svg/straight-${rotation % 2 === 0 ? 'h' : 'v'}${filled}.svg`;
+    case 'bend': {
+      const names = ['bend-TR', 'bend-RB', 'bend-BL', 'bend-LT'];
+      return `/pipes-svg/${names[rotation % 4]}${filled}.svg`;
     }
-    parts.push(`M${x},${y}h${w}v${h}h${-w}z`);
+    case 'tee': {
+      const names = ['T-down', 'T-left', 'T-up', 'T-right'];
+      return `/pipes-svg/${names[rotation % 4]}${filled}.svg`;
+    }
+    case 'cross':
+      return `/pipes-svg/cross-${isFilled ? 'filled' : 'empty'}.svg`;
+    case 'dead': {
+      const names = ['stub-right', 'stub-down', 'stub-left', 'stub-up'];
+      return `/pipes-svg/${names[rotation % 4]}${filled}.svg`;
+    }
+    default:
+      return `/pipes-svg/stub-right${filled}.svg`;
   }
-
-  return parts.join(' ');
 }
 
 function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, onClick }: PipeCellProps) {
   const bgColor = isSource ? '#E8FFE0' : isDrain ? '#FFE8E5' : '#F5F5F5';
-  const connections = getConnections(type as any, rotation);
-  const wallPath = buildPipePath(connections, size / 2, size, 0, 2);
-  const interiorPath = buildPipePath(connections, size / 2, size, size * 0.065, 2);
-  const interiorColor = isFilled ? PIPE_INTERIOR_FILLED : PIPE_INTERIOR_EMPTY;
+  const svgUrl = getPipeSvgUrl(type, rotation, isFilled, isSource, isDrain);
 
   return (
     <button
@@ -165,10 +157,7 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
         padding: 0,
       }}
     >
-      <svg width={size} height={size} viewBox={`${-2} ${-2} ${size + 4} ${size + 4}`} style={{ display: 'block', pointerEvents: 'none', overflow: 'visible' }}>
-        <path d={wallPath} fill={PIPE_WALL_COLOR} />
-        <path d={interiorPath} fill={interiorColor} />
-      </svg>
+      <img src={svgUrl} alt="" width={size} height={size} style={{ display: 'block', pointerEvents: 'none' }} draggable={false} />
       {isSource && (
         <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 14, height: 14, borderRadius: '50%', background: SOURCE_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}>
           <svg width={8} height={8} viewBox="0 0 8 8"><polygon points="4,1 7,4 4,7 1,4" fill="#fff" /></svg>
