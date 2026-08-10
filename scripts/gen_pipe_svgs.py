@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
-"""Generate 144x144 SVG pipe tiles with smooth rounded bend corners."""
+"""Generate 144x144 SVG pipe tiles with smooth rounded bend corners.
+
+Fixes over previous version:
+1. All coordinates are clean integers (no floating-point noise)
+2. Bend corner radius increased from ~22 to 36 for smooth curves
+3. Source/drain are full-width straight pipes (not half-length stubs)
+4. T-junctions use single merged paths (no overlapping rectangles)
+"""
 import os
 
 OUT_DIR = "/home/z/my-project/public/pipes-svg"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-S = 144.0
-H = S / 2  # 72
-CH_W = S * 0.40
-CH_HALF = CH_W / 2
-WALL_T = S * 0.065
-ws = H - CH_HALF  # 43.2
-we = H + CH_HALF  # 100.8
-R = CH_HALF * 0.75  # corner radius ~21.6
+# Integer dimensions — no floating-point noise
+S = 144
+H = S // 2          # 72
+CH_HALF = 29        # channel half-width (channel = 58px wide)
+WALL_T = 9           # wall thickness
+R = 36               # bend corner radius (was 21.6, now much smoother)
 
 
 def _c(inset=0):
-    a = ws + inset
-    b = we - inset
+    """Return (start, end, width) for the channel along one axis."""
+    a = H - CH_HALF + inset
+    b = H + CH_HALF - inset
     return a, b, b - a
 
 
@@ -36,41 +42,50 @@ def cross(inset=0):
     return f"M{a},0v{S}h{w}v-{S}z M0,{a}h{S}v{w}h-{S}z"
 
 
-def arm_rect(d, inset=0):
+def tee_down(inset=0):
+    """Horizontal bar + down stem (single merged path, no overlap)."""
     a, b, w = _c(inset)
-    if d == 'left':   return f"M0,{a}h{b}v{w}h-{b}z"
-    if d == 'right':  return f"M{a},{a}h{S - a}v{w}h-{S - a}z"
-    if d == 'up':    return f"M{a},0v{b}h{w}v-{b}z"
-    if d == 'down':  return f"M{a},{a}v{S - a}h{w}v-{S - a}z"
+    return f"M0,{a}H{S}V{b}H{b}V{S}H{a}V{b}H0Z"
 
 
-def tee(orientation, inset=0):
-    arms_map = {
-        'down':  ['left', 'right', 'down'],
-        'left':  ['up', 'down', 'left'],
-        'up':    ['left', 'right', 'up'],
-        'right': ['up', 'down', 'right'],
-    }
-    return ' '.join(arm_rect(d, inset) for d in arms_map[orientation])
+def tee_up(inset=0):
+    """Horizontal bar + up stem (single merged path, no overlap)."""
+    a, b, w = _c(inset)
+    return f"M0,{a}H{a}V0H{b}V{a}H{S}V{b}H0Z"
+
+
+def tee_left(inset=0):
+    """Vertical bar + left stem (single merged path, no overlap)."""
+    a, b, w = _c(inset)
+    return f"M{a},0H{b}V{S}H{a}V{b}H0V{a}H{a}Z"
+
+
+def tee_right(inset=0):
+    """Vertical bar + right stem (single merged path, no overlap)."""
+    a, b, w = _c(inset)
+    return f"M{a},0H{b}V{a}H{S}V{b}H{b}V{S}H{a}Z"
+
+
+TEE_FNS = {'down': tee_down, 'left': tee_left, 'up': tee_up, 'right': tee_right}
 
 
 def stub(d, inset=0):
-    return arm_rect(d, inset)
+    a, b, w = _c(inset)
+    if d == 'right': return f"M{a},{a}H{S}V{b}H{a}Z"
+    if d == 'left':  return f"M0,{a}H{b}V{b}H0Z"
+    if d == 'down':  return f"M{a},{a}V{S}H{b}V{a}Z"
+    if d == 'up':    return f"M{a},0V{b}H{b}V0Z"
 
 
 def bend_tr(inset=0):
-    """
-    TR bend: connects UP and RIGHT.
-    L-shape with 6 vertices, CW from top-left:
-    (a,0)→(b,0)→(b,a)→(S,a)→(S,b)→(a,b)→(a,0)
+    """TR bend: connects TOP and RIGHT. Smooth rounded corners.
     
-    Convex corner at (b,a): going DOWN then RIGHT. Round by cutting tip.
-    Reflex corner at (a,b): going LEFT then UP. Round by filling.
+    L-shape CW: (a,0)->(b,0)->turn->(S,a)->(S,b)->turn->(a,b)->(a,0)
+    Convex corner at (b,a): arc CW from (b, a-r) to (b-r, a)
+    Reflex corner at (a,b): arc CCW from (a+r, b) to (a, b-r)
     """
     a, b, w = _c(inset)
-    r = max(R - inset * 1.2, 2)
-    # Round convex corner (b,a): stop at (b, a-r), arc CW to (b-r, a)
-    # Round reflex corner (a,b): stop at (a+r, b), arc CCW to (a, b-r)
+    r = max(R - inset, 2)
     return (f"M{a},0H{b}V{a - r}A{r},{r} 0 0,1 {b - r},{a}"
             f"H{S}V{b}H{a + r}A{r},{r} 0 0,0 {a},{b - r}V0Z")
 
@@ -112,7 +127,7 @@ for name, angle in [('bend-RB', 90), ('bend-BL', 180), ('bend-LT', 270)]:
             f.write(svg)
         count += 1
 
-# Cross
+# Cross (manual naming: cross-empty.svg / cross-filled.svg)
 with open(os.path.join(OUT_DIR, 'cross-empty.svg'), 'w') as f:
     f.write(_svg(cross(0), cross(WALL_T), '#D0D0D0'))
 with open(os.path.join(OUT_DIR, 'cross-filled.svg'), 'w') as f:
@@ -121,7 +136,8 @@ count += 2
 
 # Tees
 for o in ['down', 'left', 'up', 'right']:
-    _write(f'T-{o}', tee(o, 0), tee(o, WALL_T))
+    fn = TEE_FNS[o]
+    _write(f'T-{o}', fn(0), fn(WALL_T))
     count += 2
 
 # Stubs
@@ -129,14 +145,20 @@ for d in ['right', 'down', 'left', 'up']:
     _write(f'stub-{d}', stub(d, 0), stub(d, WALL_T))
     count += 2
 
-# Source (filled)
-for d in ['left', 'right', 'up', 'down']:
+# Source (filled blue) — source-left is full-width straight; others are stubs
+with open(os.path.join(OUT_DIR, 'source-left.svg'), 'w') as f:
+    f.write(_svg(straight_h(0), straight_h(WALL_T), '#1CB0F6'))
+count += 1
+for d in ['right', 'up', 'down']:
     with open(os.path.join(OUT_DIR, f'source-{d}.svg'), 'w') as f:
         f.write(_svg(stub(d, 0), stub(d, WALL_T), '#1CB0F6'))
     count += 1
 
-# Drain (empty)
-for d in ['right', 'left', 'up', 'down']:
+# Drain (empty gray) — drain-right is full-width straight; others are stubs
+with open(os.path.join(OUT_DIR, 'drain-right.svg'), 'w') as f:
+    f.write(_svg(straight_h(0), straight_h(WALL_T), '#D0D0D0'))
+count += 1
+for d in ['left', 'up', 'down']:
     with open(os.path.join(OUT_DIR, f'drain-{d}.svg'), 'w') as f:
         f.write(_svg(stub(d, 0), stub(d, WALL_T), '#D0D0D0'))
     count += 1
