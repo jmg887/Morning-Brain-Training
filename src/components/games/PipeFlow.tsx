@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameStore, type PipeMode } from '@/store/useGameStore';
-import { generatePipeSession, computeWaterFlow, isPuzzleSolved, traceFlowPath, type PipeRound, type PipePuzzle } from '@/lib/pipeGenerator';
+import { generatePipeSession, computeWaterFlow, isPuzzleSolved, traceFlowPath, getConnections, type PipeRound, type PipePuzzle } from '@/lib/pipeGenerator';
 import { dateToSeed, getTodaySeedStr } from '@/lib/seededRandom';
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
@@ -92,35 +92,7 @@ function createInitialState(isFlow: boolean): PlayState {
   };
 }
 
-// ─── Pipe Asset Mapping ────────────────────────────────────────────────
-
-const OPPOSITE_DIR: Record<string, string> = { up: 'down', down: 'up', left: 'right', right: 'left' };
-
-/** Map (type, rotation) to sprite asset name. */
-function getPipeSpriteName(type: string, rotation: number): string {
-  switch (type) {
-    case 'straight':
-      return (rotation % 2 === 0) ? 'straight-h' : 'straight-v';
-    case 'bend':
-      return ['bend-TR', 'bend-RB', 'bend-BL', 'bend-LT'][rotation % 4];
-    case 'tee':
-      return ['T-up', 'T-right', 'T-down', 'T-left'][rotation % 4];
-    case 'cross':
-      return 'cross-empty';
-    case 'dead':
-      return ['stub-right', 'stub-down', 'stub-left', 'stub-up'][rotation % 4];
-    default:
-      return 'cross-empty';
-  }
-}
-
-/** Get the pipe asset URL for a given type, rotation, and fill state. */
-function getPipeAssetUrl(type: string, rotation: number, filled: boolean): string {
-  const base = getPipeSpriteName(type, rotation);
-  return filled ? `/pipes/${base}-filled.png` : `/pipes/${base}.png`;
-}
-
-// ─── Pipe Rendering Component (PNG-based) ──────────────────────────────
+// ─── Pipe Rendering Component (SVG hollow pipes) ─────────────────────
 
 interface PipeCellProps {
   cellKey: string;
@@ -138,10 +110,48 @@ interface PipeCellProps {
   frontierInfo?: { entryDir: string; exitDir: string; flowDir: string; fillKey: number };
 }
 
+const PIPE_WALL_COLOR = '#777';
+const PIPE_INTERIOR_EMPTY = '#D0D0D0';
+const PIPE_INTERIOR_FILLED = '#1CB0F6';
+
+/** Build an SVG path string for a pipe's connected directions.
+ *  Uses a single path per layer (wall / interior) so bends and tees
+ *  look like continuous corridors, not overlapping rectangles. */
+function buildPipePath(connections: string[], half: number, size: number, inset: number, pad: number): string {
+  const parts: string[] = [];
+
+  for (const dir of connections) {
+    let x = 0, y = 0, w = 0, h = 0;
+    switch (dir) {
+      case 'up':
+        x = half - size * 0.20 + inset; y = -pad;
+        w = size * 0.40 - inset * 2; h = half + size * 0.20 - inset + pad;
+        break;
+      case 'down':
+        x = half - size * 0.20 + inset; y = half - size * 0.20 + inset;
+        w = size * 0.40 - inset * 2; h = half + size * 0.20 - inset + pad;
+        break;
+      case 'left':
+        x = -pad; y = half - size * 0.20 + inset;
+        w = half + size * 0.20 - inset + pad; h = size * 0.40 - inset * 2;
+        break;
+      case 'right':
+        x = half - size * 0.20 + inset; y = half - size * 0.20 + inset;
+        w = half + size * 0.20 - inset + pad; h = size * 0.40 - inset * 2;
+        break;
+    }
+    parts.push(`M${x},${y}h${w}v${h}h${-w}z`);
+  }
+
+  return parts.join(' ');
+}
+
 function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isDrainConnected, onClick }: PipeCellProps) {
   const bgColor = isSource ? '#E8FFE0' : isDrain ? '#FFE8E5' : '#F5F5F5';
-  const showFilled = isFilled;
-  const pipeSrc = getPipeAssetUrl(type, rotation, showFilled);
+  const connections = getConnections(type as any, rotation);
+  const wallPath = buildPipePath(connections, size / 2, size, 0, 2);
+  const interiorPath = buildPipePath(connections, size / 2, size, size * 0.065, 2);
+  const interiorColor = isFilled ? PIPE_INTERIOR_FILLED : PIPE_INTERIOR_EMPTY;
 
   return (
     <button
@@ -152,24 +162,21 @@ function PipeCellRender({ type, rotation, size, isFilled, isSource, isDrain, isD
         background: bgColor,
         border: `2px solid ${isSource ? SOURCE_COLOR + '40' : isDrain ? DRAIN_COLOR + '40' : GRID_BG}`,
         cursor: 'pointer',
-        overflow: 'hidden',
         padding: 0,
       }}
     >
-      <img
-        src={pipeSrc}
-        alt=""
-        draggable={false}
-        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }}
-      />
+      <svg width={size} height={size} viewBox={`${-2} ${-2} ${size + 4} ${size + 4}`} style={{ display: 'block', pointerEvents: 'none', overflow: 'visible' }}>
+        <path d={wallPath} fill={PIPE_WALL_COLOR} />
+        <path d={interiorPath} fill={interiorColor} />
+      </svg>
       {isSource && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 16, height: 16, borderRadius: '50%', background: SOURCE_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}>
-          <svg width={10} height={10} viewBox="0 0 10 10"><line x1={5} y1={2} x2={5} y2={8} stroke="#fff" strokeWidth={2} strokeLinecap="round" /><line x1={2} y1={5} x2={8} y2={5} stroke="#fff" strokeWidth={2} strokeLinecap="round" /></svg>
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 14, height: 14, borderRadius: '50%', background: SOURCE_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}>
+          <svg width={8} height={8} viewBox="0 0 8 8"><polygon points="4,1 7,4 4,7 1,4" fill="#fff" /></svg>
         </div>
       )}
       {isDrain && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 16, height: 16, borderRadius: '50%', background: isDrainConnected ? SOURCE_COLOR : DRAIN_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}>
-          <svg width={10} height={10} viewBox="0 0 10 10"><line x1={2} y1={2} x2={8} y2={8} stroke="#fff" strokeWidth={2} strokeLinecap="round" /><line x1={8} y1={2} x2={2} y2={8} stroke="#fff" strokeWidth={2} strokeLinecap="round" /></svg>
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 14, height: 14, borderRadius: '50%', background: isDrainConnected ? SOURCE_COLOR : DRAIN_COLOR, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}>
+          <svg width={8} height={8} viewBox="0 0 8 8"><rect x="1" y="1" width="6" height="6" rx="1" fill="#fff" /></svg>
         </div>
       )}
     </button>
