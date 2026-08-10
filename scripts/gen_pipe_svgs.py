@@ -83,12 +83,12 @@ def bend_tr(inset=0):
     Outer (convex) corner at (b,a): circular arc — curves outward, generous radius.
     Inner (reflex) corner at (a,b): quadratic Bézier Q(a,b) — curves
     outward into the notch without pinching the pipe channel.
+    Inner radius matches outer radius for a balanced, visible curve.
     """
     a, b, w = _c(inset)
-    r = max(R - inset, 2)       # outer corner radius
-    ri = max(round(r * 0.22), 1)  # inner corner radius
+    r = max(R - inset, 2)  # corner radius (same for inner and outer)
     return (f"M{a},0H{b}V{a - r}A{r},{r} 0 0,1 {b - r},{a}"
-            f"H{S}V{b}H{a + ri}Q{a},{b} {a},{b - ri}V0Z")
+            f"H{S}V{b}H{a + r}Q{a},{b} {a},{b - r}V0Z")
 
 
 def _svg(wall_d, int_d, color):
